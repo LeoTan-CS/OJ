@@ -31,9 +31,9 @@ export function DeleteButton({ endpoint }: { endpoint: string }) {
   return <button onClick={del} className="text-sm font-medium text-red-600">删除</button>;
 }
 
-export function AssignmentForm({ problemId, classes, assigned }: { problemId: string; classes: { id: string; name: string }[]; assigned: string[] }) {
+export function AssignmentForm({ competitionId, classes, assigned }: { competitionId: string; classes: { id: string; name: string }[]; assigned: string[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState(new Set(assigned));
-  async function save() { await fetch(`/api/admin/problems/${problemId}/assignments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classIds: Array.from(selected) }) }); router.refresh(); }
+  async function save() { await fetch(`/api/admin/competitions/${competitionId}/assignments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ classIds: Array.from(selected) }) }); router.refresh(); }
   return <div className="grid gap-2">{classes.map((c) => <label key={c.id} className="flex items-center gap-2 text-sm"><input className="w-auto" type="checkbox" checked={selected.has(c.id)} onChange={(e) => { const next = new Set(selected); if (e.target.checked) next.add(c.id); else next.delete(c.id); setSelected(next); }} />{c.name}</label>)}<button onClick={save} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">保存分配</button></div>;
 }

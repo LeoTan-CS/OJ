@@ -15,8 +15,8 @@ export function NavLink({ href, children }: { href: string; children: ReactNode 
 
 export function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    ACCEPTED: "bg-emerald-100 text-emerald-700",
-    WRONG_ANSWER: "bg-amber-100 text-amber-700",
+    SCORED: "bg-emerald-100 text-emerald-700",
+    INVALID_OUTPUT: "bg-amber-100 text-amber-700",
     TIME_LIMIT_EXCEEDED: "bg-orange-100 text-orange-700",
     RUNTIME_ERROR: "bg-rose-100 text-rose-700",
     REJECTED: "bg-red-100 text-red-700",

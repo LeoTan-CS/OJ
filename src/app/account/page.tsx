@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { AppShell } from "@/components/shell";
 import { Card } from "@/components/ui";
 import PasswordForm from "./password-form";

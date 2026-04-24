@@ -66,6 +66,10 @@ export async function requireAdmin() {
   return user;
 }
 
+export function getRoleHomePath(role: SessionUser["role"] | string) {
+  return role === "SUPER_ADMIN" || role === "ADMIN" ? "/admin" : "/dashboard";
+}
+
 export function canManageRole(actorRole: SessionUser["role"], targetRole: SessionUser["role"]) {
   if (actorRole === "SUPER_ADMIN") return true;
   return targetRole === "USER";

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { AdminNav, AppShell } from "@/components/shell";
 import { Card } from "@/components/ui";
 import { DeleteButton, JsonForm } from "@/components/admin-forms";
