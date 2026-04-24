@@ -3,6 +3,11 @@ import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "./prisma";
 import type { SessionUser } from "./types";
 
+const roles = ["SUPER_ADMIN", "ADMIN", "USER"] as const;
+function toRole(value: string): SessionUser["role"] {
+  return roles.includes(value as SessionUser["role"]) ? (value as SessionUser["role"]) : "USER";
+}
+
 const cookieName = "bench_oj_session";
 const secret = new TextEncoder().encode(process.env.AUTH_SECRET ?? "dev-secret");
 
@@ -41,7 +46,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       id: user.id,
       username: user.username,
       nickname: user.nickname,
-      role: user.role,
+      role: toRole(user.role),
       classId: user.classId,
     };
   } catch {

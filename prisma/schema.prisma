@@ -7,22 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  SUPER_ADMIN
-  ADMIN
-  USER
-}
-
-enum SubmissionStatus {
-  PENDING
-  RUNNING
-  ACCEPTED
-  WRONG_ANSWER
-  TIME_LIMIT_EXCEEDED
-  RUNTIME_ERROR
-  REJECTED
-}
-
 model Class {
   id            String              @id @default(cuid())
   name          String              @unique
@@ -39,7 +23,7 @@ model User {
   username     String       @unique
   passwordHash String
   nickname     String
-  role         Role         @default(USER)
+  role         String       @default("USER")
   enabled      Boolean      @default(true)
   classId      String?
   createdAt    DateTime     @default(now())
@@ -100,7 +84,7 @@ model Submission {
   userId      String
   problemId   String
   code        String
-  status      SubmissionStatus       @default(PENDING)
+  status      String                 @default("PENDING")
   score       Int                    @default(0)
   durationMs  Int?
   error       String?
@@ -115,7 +99,7 @@ model SubmissionCaseResult {
   id           String           @id @default(cuid())
   submissionId String
   testCaseId   String
-  status       SubmissionStatus
+  status       String
   durationMs   Int
   actual       String?
   error        String?

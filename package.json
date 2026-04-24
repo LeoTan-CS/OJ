@@ -10,10 +10,12 @@
     "prisma": "prisma",
     "db:push": "prisma db push",
     "seed": "tsx scripts/seed.ts",
-    "worker": "tsx scripts/worker.ts"
+    "worker": "tsx scripts/worker.ts",
+    "db:init": "tsx scripts/init-db.ts",
+    "db:setup": "pnpm prisma generate && pnpm db:init && pnpm seed"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "@prisma/client": "^5.22.0",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.2",
     "next": "16.2.4",
@@ -29,7 +31,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
-    "prisma": "^6.19.3",
+    "prisma": "^5.22.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
