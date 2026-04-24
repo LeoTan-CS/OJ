@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+enum SubmissionStatus {
+  PENDING
+  RUNNING
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  RUNTIME_ERROR
+  REJECTED
+}
+
+model Class {
+  id            String              @id @default(cuid())
+  name          String              @unique
+  description   String              @default("")
+  enabled       Boolean             @default(true)
+  createdAt     DateTime            @default(now())
+  users         User[]
+  assignments   ProblemAssignment[]
+  announcements Announcement[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  username     String       @unique
+  passwordHash String
+  nickname     String
+  role         Role         @default(USER)
+  enabled      Boolean      @default(true)
+  classId      String?
+  createdAt    DateTime     @default(now())
+  class        Class?       @relation(fields: [classId], references: [id], onDelete: SetNull)
+  submissions  Submission[]
+}
+
+model Problem {
+  id            String              @id @default(cuid())
+  title         String
+  description   String
+  functionName  String
+  functionSig   String
+  codeTemplate  String
+  difficulty    String              @default("Easy")
+  timeLimitMs   Int                 @default(2000)
+  enabled       Boolean             @default(true)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  testCases     TestCase[]
+  assignments   ProblemAssignment[]
+  submissions   Submission[]
+}
+
+model TestCase {
+  id          String                 @id @default(cuid())
+  problemId   String
+  args        String
+  expected    String
+  isSample    Boolean                @default(false)
+  sortOrder   Int                    @default(0)
+  problem     Problem                @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  caseResults SubmissionCaseResult[]
+}
+
+model ProblemAssignment {
+  id        String   @id @default(cuid())
+  problemId String
+  classId   String
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([problemId, classId])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  classId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  class     Class?   @relation(fields: [classId], references: [id], onDelete: SetNull)
+}
+
+model Submission {
+  id          String                 @id @default(cuid())
+  userId      String
+  problemId   String
+  code        String
+  status      SubmissionStatus       @default(PENDING)
+  score       Int                    @default(0)
+  durationMs  Int?
+  error       String?
+  createdAt   DateTime               @default(now())
+  completedAt DateTime?
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problem     Problem                @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  caseResults SubmissionCaseResult[]
+}
+
+model SubmissionCaseResult {
+  id           String           @id @default(cuid())
+  submissionId String
+  testCaseId   String
+  status       SubmissionStatus
+  durationMs   Int
+  actual       String?
+  error        String?
+  submission   Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testCase     TestCase         @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+}
