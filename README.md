@@ -1,16 +1,23 @@
-# Bench AI Leaderboard
+# Bench AI Model Platform
 
-一个本地可运行的 Kaggle 风格 AI 打榜平台。平台支持账号角色、班级内比赛、公告、代码提交队列、独立 Worker 运行参赛代码、隐藏测试集评分和实时排行榜。
+一个本地可运行的模型评测平台，聚焦账号管理、模型上传、模型测试、模型排名、排行榜和全站公告。
 
 ## 启动
+
+首次启动或数据库结构变化时执行：
 
 ```bash
 pnpm install
 pnpm db:setup
+```
+
+日常重启只需要启动服务，不要把初始化当成重启命令：
+
+```bash
 pnpm dev
 ```
 
-另开一个终端启动评测进程：
+另开一个终端启动评测 Worker：
 
 ```bash
 pnpm worker
@@ -21,37 +28,26 @@ pnpm worker
 ## 初始账号
 
 - 超级管理员：`superadmin` / `superadmin123`
-- 示例学生：`student` / `student123`
+- 示例用户：`user1` / `user1`、`user2` / `user2`、`user3` / `user3`
+- 示例小组：`group1`、`group2`、`group3`
 
-## 功能
+## 功能概览
 
-- `SUPER_ADMIN`：可管理管理员、普通用户、班级、比赛、公告、提交和统计。
-- `ADMIN`：可管理普通用户、班级、比赛、公告、提交和统计，不能管理管理员账号。
-- `USER`：只能访问自己班级分配的比赛、公告、提交和账号设置。
+- `SUPER_ADMIN`：可管理管理员、普通用户、公告、模型测试、模型排名和积分排行榜。
+- `ADMIN`：可管理普通用户、公告、模型测试、模型排名和积分排行榜，不能管理管理员账号。
+- `USER`：可访问仪表盘、排行榜、小组模型和账号设置。
+- 模型排名完成后会在 `uploads/model-rankings/<batchId>/leaderboard-snapshot.json` 生成本地快照。
 
-## 比赛说明
+## 模型约定
 
-管理员创建比赛时配置：
+- 每个小组仅保留一个模型，目录名固定为小组名。
+- 同一小组内任意成员上传模型，都会覆盖该小组当前模型。
+- 上传文件必须为 `.zip`，压缩包内需要包含 `main.py`，或者单一根目录下的 `main.py`。
+- 平台测试题库默认来自 `data/model-benchmark/questions.json`。
+- 用户侧“快速测试”会用固定问题“简单介绍一下自己”直接验证模型是否可运行。
 
-- 隐藏测试集目录：传给用户代码的 `--data-dir`。
-- 答案文件路径：仅 Worker 内部读取，支持 CSV `id,label` 或 JSON `{ "answers": [{ "id": "1", "label": "0" }] }`。
-- 评分指标：`accuracy`、`macro_f1`、`rmse`、`mae`。
-- 运行限制：超过时间会标记为 `TIME_LIMIT_EXCEEDED`。
+## 排名说明
 
-学生提交单个 Python 文件。Worker 会运行：
-
-```bash
-python3 main.py --data-dir <hiddenTestDir> --output <predictionCsvPath>
-```
-
-参赛代码可以读取隐藏测试目录内的数据文件；示例比赛使用 `features.json`。参赛代码必须写出预测 CSV，格式为：
-
-```csv
-id,prediction
-1,cat
-2,dog
-```
-
-示例比赛内置 5000 条 JSON 测试记录，路径为 `data/demo-competition/test/features.json`，答案保存在平台内部 `data/demo-competition/answers.json`。
-
-排行榜按每个用户在每场比赛的历史最佳提交展示。第一版仅提供基础安全限制，不适合运行不可信恶意代码。
+- 后台“模型测试”会对所有启用模型创建异步测试批次。
+- 后台“模型排名”会按 `data/model-benchmark/questions.json` 中的题目逐题执行，并由裁判模型生成质量排名报告。
+- 用户侧 `/leaderboard` 会展示次榜与总榜，并支持前端排序。

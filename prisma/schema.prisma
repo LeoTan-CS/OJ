@@ -7,79 +7,110 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Class {
-  id            String                  @id @default(cuid())
-  name          String                  @unique
-  description   String                  @default("")
-  enabled       Boolean                 @default(true)
-  createdAt     DateTime                @default(now())
-  users         User[]
-  assignments   CompetitionAssignment[]
-  announcements Announcement[]
-}
-
 model User {
-  id           String       @id @default(cuid())
-  username     String       @unique
+  id           String           @id @default(cuid())
+  username     String           @unique
   passwordHash String
   nickname     String
-  role         String       @default("USER")
-  enabled      Boolean      @default(true)
-  classId      String?
-  createdAt    DateTime     @default(now())
-  class        Class?       @relation(fields: [classId], references: [id], onDelete: SetNull)
-  submissions  Submission[]
+  role         String           @default("USER")
+  groupId      String?
+  enabled      Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  group        Group?           @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  models       ModelArtifact[]
+  uploadRecords ModelUploadRecord[]
+  testBatches  ModelTestBatch[] @relation("ModelTestBatchCreator")
 }
 
-model Competition {
-  id                String                  @id @default(cuid())
-  title             String
-  description       String
-  metric            String                  @default("accuracy")
-  hiddenTestDataDir String
-  answerCsvPath     String
-  codeTemplate      String                  @default("")
-  runtimeLimitMs    Int                     @default(10000)
-  enabled           Boolean                 @default(true)
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  assignments       CompetitionAssignment[]
-  submissions       Submission[]
-}
-
-model CompetitionAssignment {
-  id            String      @id @default(cuid())
-  competitionId String
-  classId       String
-  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
-  class         Class       @relation(fields: [classId], references: [id], onDelete: Cascade)
-
-  @@unique([competitionId, classId])
+model Group {
+  id            String              @id @default(cuid())
+  name          String              @unique
+  createdAt     DateTime            @default(now())
+  users         User[]
+  models        ModelArtifact[]
+  uploadRecords ModelUploadRecord[]
 }
 
 model Announcement {
   id        String   @id @default(cuid())
   title     String
   body      String
-  classId   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  class     Class?   @relation(fields: [classId], references: [id], onDelete: SetNull)
 }
 
-model Submission {
-  id               String      @id @default(cuid())
+model ModelArtifact {
+  id               String            @id @default(cuid())
   userId           String
-  competitionId    String
-  code             String
-  status           String      @default("PENDING")
-  metricValue      Float?
-  leaderboardScore Float?
-  durationMs       Int?
-  outputPreview    String?
-  error            String?
-  createdAt        DateTime    @default(now())
-  completedAt      DateTime?
-  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  competition      Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  groupId          String?           @unique
+  name             String
+  originalFilename String
+  archivePath      String
+  packageDir       String
+  entrypointPath   String
+  enabled          Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group            Group?            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  uploadRecords    ModelUploadRecord[]
+  results          ModelTestResult[]
+}
+
+model ModelUploadRecord {
+  id               String        @id @default(cuid())
+  modelId          String
+  groupId          String
+  userId           String
+  originalFilename String
+  archivePath      String
+  packageDir       String
+  entrypointPath   String
+  uploadedAt       DateTime      @default(now())
+  model            ModelArtifact @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  group            Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, uploadedAt])
+  @@index([userId, uploadedAt])
+  @@index([modelId, uploadedAt])
+}
+
+model ModelTestBatch {
+  id                String            @id @default(cuid())
+  kind              String            @default("TEST")
+  status            String            @default("PENDING")
+  question          String?
+  createdById       String
+  createdAt         DateTime          @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  judgeStatus       String            @default("NOT_REQUIRED")
+  judgeInputPath    String?
+  judgeRawResponse  String?
+  judgeRankingsJson String?
+  judgeReport       String?
+  judgeError        String?
+  judgeStartedAt    DateTime?
+  judgeCompletedAt  DateTime?
+  createdBy         User              @relation("ModelTestBatchCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  results           ModelTestResult[]
+}
+
+model ModelTestResult {
+  id            String          @id @default(cuid())
+  batchId       String
+  modelId       String
+  status        String          @default("PENDING")
+  durationMs    Int?
+  peakMemoryKb  Int?
+  outputPath    String?
+  outputPreview String?
+  error         String?
+  createdAt     DateTime        @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  batch         ModelTestBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  model         ModelArtifact   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, modelId])
 }

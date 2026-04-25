@@ -10,7 +10,7 @@
     "prisma": "prisma",
     "db:push": "prisma db push",
     "seed": "tsx scripts/seed.ts",
-    "worker": "tsx scripts/worker.ts",
+    "worker": "tsx watch --clear-screen=false scripts/worker.ts",
     "db:init": "tsx scripts/init-db.ts",
     "db:setup": "pnpm prisma generate && pnpm db:init && pnpm seed"
   },

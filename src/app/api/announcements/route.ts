@@ -4,12 +4,8 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   return handle(async () => {
-    const user = await requireUser();
-    const announcements = await prisma.announcement.findMany({
-      where: { OR: [{ classId: null }, { classId: user.classId }] },
-      include: { class: true },
-      orderBy: { createdAt: "desc" },
-    });
+    await requireUser();
+    const announcements = await prisma.announcement.findMany({ orderBy: { createdAt: "desc" } });
     return json({ announcements });
   });
 }

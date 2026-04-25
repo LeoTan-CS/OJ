@@ -15,5 +15,5 @@ export default function LoginForm() {
     router.replace(data.role === "SUPER_ADMIN" || data.role === "ADMIN" ? "/admin" : "/dashboard");
     router.refresh();
   }
-  return <form action={submit} className="mt-6 grid gap-4"><Field label="用户名"><input name="username" required /></Field><Field label="密码"><input name="password" type="password" required /></Field>{error && <p className="text-sm text-red-600">{error}</p>}<Button>登录</Button><p className="text-xs text-slate-500">初始化账号：superadmin / superadmin123，student / student123</p></form>;
+  return <form action={submit} className="mt-6 grid gap-4"><Field label="用户名"><input name="username" required /></Field><Field label="密码"><input name="password" type="password" required /></Field>{error && <p className="text-sm text-red-600">{error}</p>}<Button>登录</Button><p className="text-xs text-slate-500">初始化账号：superadmin / superadmin123，user1 / user1，user2 / user2，user3 / user3</p></form>;
 }

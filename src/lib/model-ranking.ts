@@ -1,0 +1,221 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { readModelQuestions, type ModelQuestion } from "@/lib/model-runner";
+
+export const modelRankingQuestionSourceLabel = "data/model-benchmark/questions.json";
+export const modelRankingQuestionsPath = join(/*turbopackIgnore: true*/ process.cwd(), "data", "model-benchmark", "questions.json");
+
+function getModelRankingsRoot() {
+  return join(/*turbopackIgnore: true*/ process.cwd(), "uploads", "model-rankings");
+}
+
+export type JudgeRanking = {
+  rank: number;
+  modelId: string;
+  modelName: string;
+  reason: string;
+  score?: number;
+  averageScore?: number;
+};
+
+export type JudgeQuestionReport = {
+  questionId: string;
+  question: string;
+  rankings: JudgeRanking[];
+  summaryReport: string;
+  strengths?: string[];
+  weaknesses?: string[];
+  recommendations?: string[];
+  answerCount?: number;
+  failuresCount?: number;
+};
+
+export type JudgeBatchReport = {
+  version: 2;
+  questionSource: string;
+  questionCount: number;
+  summaryReport: string;
+  questions: JudgeQuestionReport[];
+};
+
+export type RankingJudgeAnswer = {
+  modelId: string;
+  modelName: string;
+  username: string;
+  answer: string;
+  status: string;
+  error: string | null;
+  durationMs: number | null;
+  peakMemoryKb: number | null;
+};
+
+export type RankingJudgeFailure = {
+  modelId: string;
+  modelName: string;
+  username: string;
+  status: string;
+  error: string | null;
+};
+
+export type RankingJudgeQuestionInput = {
+  questionId: string;
+  question: string;
+  answers: RankingJudgeAnswer[];
+  failures: RankingJudgeFailure[];
+};
+
+export type RankingJudgeBatchInput = {
+  batchId: string;
+  questionSource: string;
+  questionCount: number;
+  questions: RankingJudgeQuestionInput[];
+};
+
+type ChatCompletionResponse = {
+  choices?: { message?: { content?: string } }[];
+};
+
+function requireEnv(name: string) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`缺少环境变量 ${name}`);
+  return value;
+}
+
+export function assertJudgeConfig() {
+  requireEnv("JUDGE_API_BASE_URL");
+  requireEnv("JUDGE_API_KEY");
+  requireEnv("JUDGE_MODEL");
+}
+
+export async function readDefaultModelRankingQuestions() {
+  return readModelQuestions(await readFile(modelRankingQuestionsPath, "utf8"));
+}
+
+export function summarizeRankingQuestions(questions: ModelQuestion[]) {
+  return `${modelRankingQuestionSourceLabel} · ${questions.length} 题`;
+}
+
+export function modelRankingPaths(batchId: string) {
+  const root = join(getModelRankingsRoot(), batchId);
+  return {
+    root,
+    questionPath: join(root, "question.json"),
+    judgeInputPath: join(root, "judge-input.json"),
+    leaderboardSnapshotPath: join(root, "leaderboard-snapshot.json"),
+  };
+}
+
+export async function writeRankingQuestion(batchId: string, questions: ModelQuestion[]) {
+  const paths = modelRankingPaths(batchId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.questionPath, JSON.stringify({ questions }, null, 2));
+  return resolve(paths.questionPath);
+}
+
+export async function writeJudgeInput(batchId: string, input: RankingJudgeBatchInput) {
+  const paths = modelRankingPaths(batchId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.judgeInputPath, JSON.stringify(input, null, 2));
+  return resolve(paths.judgeInputPath);
+}
+
+export async function writeLeaderboardSnapshot(batchId: string, snapshot: unknown) {
+  const paths = modelRankingPaths(batchId);
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.leaderboardSnapshotPath, JSON.stringify(snapshot, null, 2));
+  return resolve(paths.leaderboardSnapshotPath);
+}
+
+function extractJsonObject(text: string) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = (fenced ?? text).trim();
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(candidate.slice(start, end + 1));
+    throw new Error("裁判模型未返回有效 JSON");
+  }
+}
+
+function normalizeJudgeReport(value: unknown, questionMeta: Pick<RankingJudgeQuestionInput, "questionId" | "question">): JudgeQuestionReport {
+  if (!value || typeof value !== "object") throw new Error("裁判结果必须是 JSON 对象");
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.rankings)) throw new Error("裁判结果缺少 rankings 数组");
+  const rankings = record.rankings.map((item, index) => {
+    if (!item || typeof item !== "object") throw new Error("rankings 项必须是对象");
+    const row = item as Record<string, unknown>;
+    const modelId = String(row.modelId ?? "");
+    const modelName = String(row.modelName ?? "");
+    const reason = String(row.reason ?? "");
+    if (!modelId || !modelName || !reason) throw new Error("rankings 项缺少 modelId/modelName/reason");
+    const score = row.score == null ? undefined : Number(row.score);
+    return {
+      rank: Number(row.rank ?? index + 1),
+      modelId,
+      modelName,
+      reason,
+      score: Number.isFinite(score) ? score : undefined,
+    };
+  });
+  return {
+    questionId: questionMeta.questionId,
+    question: questionMeta.question,
+    rankings,
+    summaryReport: String(record.summaryReport ?? ""),
+    strengths: Array.isArray(record.strengths) ? record.strengths.map(String) : [],
+    weaknesses: Array.isArray(record.weaknesses) ? record.weaknesses.map(String) : [],
+    recommendations: Array.isArray(record.recommendations) ? record.recommendations.map(String) : [],
+  };
+}
+
+export function createEmptyJudgeReport(input: RankingJudgeQuestionInput): JudgeQuestionReport {
+  return {
+    questionId: input.questionId,
+    question: input.question,
+    rankings: [],
+    summaryReport: "本题没有任何可评估输出，无法进行质量排序。",
+    strengths: [],
+    weaknesses: ["所有参与模型在本题都没有产生可供裁判评估的输出。"],
+    recommendations: ["请检查模型运行稳定性，以及在本题上的输出是否被正确写出。"],
+    answerCount: 0,
+    failuresCount: input.failures.length,
+  };
+}
+
+export async function judgeModelRanking(input: RankingJudgeQuestionInput) {
+  const baseUrl = requireEnv("JUDGE_API_BASE_URL").replace(/\/+$/, "");
+  const apiKey = requireEnv("JUDGE_API_KEY");
+  const model = requireEnv("JUDGE_MODEL");
+  const prompt = [
+    "你是一个严格、公正的大模型回答质量裁判。请根据准确性、完整性、结构清晰度、事实可靠性和中文表达质量排序。",
+    "只要 answers 中有输出文本，该模型就必须参与质量排名。",
+    "请忽略输出被截断、超时、中断、长度不足等因素带来的形式问题，只基于已经给出的回答内容本身进行比较。",
+    "不要因为模型状态不是 SCORED 就排除它；如果 answers 里有文本，就必须纳入排名。",
+    "failures 仅表示完全没有可评估输出的模型，它们不参与排名，但可以在报告中说明。",
+    "只输出质量排名，不要输出分数。",
+    "必须只返回严格 JSON，不要 Markdown，不要代码块。JSON 结构：",
+    '{"rankings":[{"rank":1,"modelId":"","modelName":"","reason":""}],"summaryReport":"","strengths":[""],"weaknesses":[""],"recommendations":[""]}',
+    "评测输入如下：",
+    JSON.stringify(input, null, 2),
+  ].join("\n");
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.2 }),
+  });
+  const bodyText = await response.text();
+  if (!response.ok) throw new Error(`裁判模型调用失败: HTTP ${response.status}`);
+  const body = JSON.parse(bodyText) as ChatCompletionResponse;
+  const content = body.choices?.[0]?.message?.content;
+  if (!content) throw new Error("裁判模型响应缺少 content");
+  const report = normalizeJudgeReport(extractJsonObject(content), input);
+  report.answerCount = input.answers.length;
+  report.failuresCount = input.failures.length;
+  return { rawResponse: bodyText, report };
+}
+
+export async function readJudgeInput(path: string) {
+  return JSON.parse(await readFile(path, "utf8")) as RankingJudgeBatchInput;
+}

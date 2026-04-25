@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   return handle(async () => {
     const body = await parseJson(request, loginSchema);
     const user = await prisma.user.findUnique({ where: { username: body.username } });
-    if (!user || !user.enabled || !(await bcrypt.compare(body.password, user.passwordHash))) return error("Invalid credentials", 401);
+    if (!user || !(await bcrypt.compare(body.password, user.passwordHash))) return error("Invalid credentials", 401);
     await createSession(user.id);
     return json({ ok: true, role: user.role });
   });
