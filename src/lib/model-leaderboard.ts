@@ -484,7 +484,7 @@ function buildLegacyLeaderboardBatch(batch: RankingBatchSource): LeaderboardBatc
       return {
         modelId: result.modelId,
         modelName: result.model.name,
-        username: result.model.group?.name ?? result.model.name,
+        username: result.model.user.username,
         status: result.status,
         questionCount: 1,
         successfulQuestions: result.status === "SCORED" ? 1 : 0,

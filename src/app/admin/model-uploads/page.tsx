@@ -36,13 +36,13 @@ export default async function AdminModelUploadsPage({
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold">模型上传记录</h1>
-              <p className="mt-1 text-sm text-slate-500">汇总全部成功上传记录，可按小组筛选。</p>
+              <p className="mt-1 text-sm text-slate-500">汇总全部成功上传记录，可按组别标记筛选。</p>
             </div>
             <form className="flex flex-wrap items-end gap-3">
               <label className="grid gap-1 text-sm font-medium text-slate-700">
-                <span>小组</span>
+                <span>组别标记</span>
                 <select name="groupId" defaultValue={validGroupId}>
-                  <option value="">全部小组</option>
+                  <option value="">全部组别</option>
                   {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
                 </select>
               </label>
@@ -56,8 +56,8 @@ export default async function AdminModelUploadsPage({
           <table>
             <thead>
               <tr>
-                <th>小组</th>
-                <th>上传同学</th>
+                <th>组别标记</th>
+                <th>上传用户</th>
                 <th>文件名</th>
                 <th>上传时间</th>
               </tr>
@@ -65,7 +65,7 @@ export default async function AdminModelUploadsPage({
             <tbody>
               {records.map((record) => (
                 <tr key={record.id}>
-                  <td className="font-semibold text-slate-950">{record.group.name}</td>
+                  <td className="font-semibold text-slate-950">{record.group?.name ?? "未分组"}</td>
                   <td>{record.user.username}</td>
                   <td className="break-all">{record.originalFilename}</td>
                   <td>{formatDate(record.uploadedAt)}</td>

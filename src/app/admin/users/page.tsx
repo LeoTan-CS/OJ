@@ -41,7 +41,7 @@ export default async function UsersPage() {
                       { label: "SUPER_ADMIN", value: "SUPER_ADMIN" },
                     ],
                   },
-                  { name: "groupId", label: "小组", options: groupOptions },
+                  { name: "groupId", label: "组别标记", options: groupOptions },
                 ]}
               />
             </div>
@@ -84,7 +84,7 @@ export default async function UsersPage() {
               <tr>
                 <th>用户名</th>
                 <th>角色</th>
-                <th>小组</th>
+                <th>组别标记</th>
                 <th>创建时间</th>
                 <th></th>
               </tr>
@@ -94,7 +94,7 @@ export default async function UsersPage() {
                 <tr key={user.id}>
                   <td className="font-semibold text-slate-950">{user.username}</td>
                   <td>{user.role}</td>
-                  <td>{user.group?.name ?? "-"}</td>
+                  <td>{user.group?.name ?? "未分组"}</td>
                   <td>{formatDate(user.createdAt)}</td>
                   <td><DeleteButton endpoint={`/api/admin/users/${user.id}`} /></td>
                 </tr>

@@ -25,23 +25,22 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
     return { uploadIds: [], restoredModelIds: [], restoredBatchIds: [], restoredResultIds: [], orphanUploadIds: [], invalidUploadIds: [], invalidBatchIds: [] };
   }
 
-  const [groups, existingModels] = await Promise.all([
-    prisma.group.findMany({
-      where: { name: { in: uploadIds } },
-      include: { users: { where: { role: "USER" }, orderBy: { createdAt: "asc" }, take: 1 } },
+  const [users, existingModels] = await Promise.all([
+    prisma.user.findMany({
+      where: { username: { in: uploadIds }, role: "USER" },
+      include: { group: true },
     }),
     prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, select: { id: true, userId: true } }),
   ]);
-  const groupByName = new Map(groups.map((group) => [group.name, group]));
+  const userByUsername = new Map(users.map((user) => [user.username, user]));
   const existingModelById = new Map(existingModels.map((model) => [model.id, model]));
   const restoredModelIds: string[] = [];
   const orphanUploadIds: string[] = [];
   const invalidUploadIds: string[] = [];
 
   for (const uploadId of uploadIds) {
-    const group = groupByName.get(uploadId);
-    const fallbackUser = group?.users[0];
-    if (!group || !fallbackUser) {
+    const user = userByUsername.get(uploadId);
+    if (!user) {
       orphanUploadIds.push(uploadId);
       continue;
     }
@@ -52,8 +51,8 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
       await prisma.modelArtifact.upsert({
         where: { id: uploadId },
         update: {
-          userId: existingModel?.userId ?? fallbackUser.id,
-          groupId: group.id,
+          userId: user.id,
+          groupId: user.groupId,
           name: uploadId,
           archivePath: metadata.archivePath,
           packageDir: metadata.packageDir,
@@ -61,8 +60,8 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
         },
         create: {
           id: uploadId,
-          userId: fallbackUser.id,
-          groupId: group.id,
+          userId: user.id,
+          groupId: user.groupId,
           name: uploadId,
           originalFilename: metadata.originalFilename,
           archivePath: metadata.archivePath,

@@ -3,13 +3,15 @@ import { canManageRole, requireAdmin } from "@/lib/auth";
 import { handle, json, parseJson, error } from "@/lib/http";
 import { prisma } from "@/lib/prisma";
 import { parseUsersXlsx } from "@/lib/xlsx-users";
+import { publicUserWithGroupSelect } from "@/lib/user-select";
 import { userSchema } from "@/lib/validators";
 
 const groupNamePattern = /^[A-Za-z0-9_.-]+$/;
+const usernamePattern = /^[A-Za-z0-9_.-]+$/;
 
 async function resolveUserGroupId(role: "SUPER_ADMIN" | "ADMIN" | "USER", groupId: string | undefined) {
   if (role !== "USER") return null;
-  if (!groupId) throw new Response(JSON.stringify({ error: "普通用户必须选择小组" }), { status: 400 });
+  if (!groupId) return null;
   const group = await prisma.group.findUnique({ where: { id: groupId } });
   if (!group) throw new Response(JSON.stringify({ error: "小组不存在" }), { status: 400 });
   return group.id;
@@ -18,7 +20,7 @@ async function resolveUserGroupId(role: "SUPER_ADMIN" | "ADMIN" | "USER", groupI
 export async function GET() {
   return handle(async () => {
     await requireAdmin();
-    return json({ users: await prisma.user.findMany({ include: { group: true }, orderBy: { createdAt: "desc" } }) });
+    return json({ users: await prisma.user.findMany({ select: publicUserWithGroupSelect, orderBy: { createdAt: "desc" } }) });
   });
 }
 
@@ -38,7 +40,7 @@ export async function POST(request: Request) {
         enabled: true,
         passwordHash: await bcrypt.hash(body.password, 10),
       },
-      include: { group: true },
+      select: publicUserWithGroupSelect,
     });
     return json({ user });
   });
@@ -62,6 +64,7 @@ export async function PUT(request: Request) {
     const groupNames = new Set<string>();
     for (const row of rows) {
       if (!canManageRole(actor.role, row.role)) return error(`第 ${row.rowNumber} 行无权创建 ${row.role}`, 403);
+      if (!usernamePattern.test(row.username)) return error(`第 ${row.rowNumber} 行用户名只能包含字母、数字、下划线、点和连字符`, 400);
       if (usernames.has(row.username)) return error(`Excel 中用户名重复：${row.username}`, 400);
       usernames.add(row.username);
       if (row.groupName) {
@@ -77,7 +80,7 @@ export async function PUT(request: Request) {
     if (existingUsers.length) return error(`用户名已存在：${existingUsers.map((user) => user.username).join("、")}`, 400);
     const groupByName = new Map(groups.map((group) => [group.name, group] as const));
     for (const row of rows) {
-      if (row.role === "USER" && (!row.groupName || !groupByName.has(row.groupName))) return error(`第 ${row.rowNumber} 行小组不存在：${row.groupName ?? ""}`, 400);
+      if (row.role === "USER" && row.groupName && !groupByName.has(row.groupName)) return error(`第 ${row.rowNumber} 行小组不存在：${row.groupName}`, 400);
     }
 
     await prisma.user.createMany({

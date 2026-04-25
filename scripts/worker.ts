@@ -52,8 +52,8 @@ type ParsedRankingModelResult = {
   questionResults: ModelQuestionResult[];
 };
 
-function modelGroupName(model: { name: string; group?: { name: string } | null }) {
-  return model.group?.name ?? model.name;
+function modelOwnerName(model: { name: string; user: { username: string } }) {
+  return model.user.username;
 }
 
 async function loadRankingBatch(batchId: string) {
@@ -182,7 +182,7 @@ async function buildRankingExecutionState(batch: LoadedRankingBatch) {
         questionInput.answers.push({
           modelId: result.modelId,
           modelName: result.model.name,
-          username: modelGroupName(result.model),
+          username: modelOwnerName(result.model),
           answer: questionResult.answer.trim(),
           status: questionResult.status,
           error: questionResult.error ?? null,
@@ -195,7 +195,7 @@ async function buildRankingExecutionState(batch: LoadedRankingBatch) {
       questionInput.failures.push({
         modelId: result.modelId,
         modelName: result.model.name,
-        username: modelGroupName(result.model),
+        username: modelOwnerName(result.model),
         status: questionResult.status,
         error: normalizeQuestionError(questionResult),
       });
@@ -204,7 +204,7 @@ async function buildRankingExecutionState(batch: LoadedRankingBatch) {
       resultId: result.id,
       modelId: result.modelId,
       modelName: result.model.name,
-      username: modelGroupName(result.model),
+      username: modelOwnerName(result.model),
       status: result.status,
       error: result.error,
       outputPath: result.outputPath ?? defaultOutputPath,

@@ -26,23 +26,23 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   if (user && user.role !== "USER") redirect(getRoleHomePath(user.role));
-  const currentGroupName = user.groupName;
+  const currentUsername = user.username;
 
   const uploadIds = await getSyncedModelUploadIds();
   const [announcements, leaderboard, model] = await Promise.all([
     prisma.announcement.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
     loadModelLeaderboardData(),
     prisma.modelArtifact.findFirst({
-      where: { id: { in: uploadIds }, groupId: user.groupId ?? "__missing_group__" },
+      where: { id: { in: uploadIds }, userId: user.id },
       include: { group: true, results: { include: { batch: true }, orderBy: { createdAt: "desc" }, take: 1 } },
       orderBy: { createdAt: "desc" },
     }),
   ]);
 
   const latestResult = model?.results[0];
-  const anonymousLeaderboard = anonymizeModelLeaderboardData(leaderboard, currentGroupName);
+  const anonymousLeaderboard = anonymizeModelLeaderboardData(leaderboard, currentUsername);
   const topRankings = anonymousLeaderboard.totals.slice(0, 5);
-  const myRankingIndex = leaderboard.totals.findIndex((entry) => entry.username === currentGroupName || entry.modelId === currentGroupName);
+  const myRankingIndex = leaderboard.totals.findIndex((entry) => entry.username === currentUsername || entry.modelId === currentUsername);
   const myRanking = myRankingIndex >= 0 ? leaderboard.totals[myRankingIndex] : null;
 
   return (
@@ -55,7 +55,7 @@ export default async function DashboardPage() {
                 <p className="text-sm font-semibold text-slate-500">用户仪表盘</p>
                 <h1 className="mt-2 text-3xl font-bold text-slate-950">模型总览</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                  这里集中查看当前小组模型状态、最近一次平台测试结果，以及全站模型排行榜的最新表现。
+                  这里集中查看当前模型状态、最近一次平台测试结果，以及全站模型排行榜的最新表现。
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -66,7 +66,7 @@ export default async function DashboardPage() {
 
             <div className="mt-8 grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="text-sm font-semibold text-slate-500">当前小组模型</div>
+                <div className="text-sm font-semibold text-slate-500">当前模型</div>
                 <div className="mt-2 text-lg font-bold text-slate-950">{model?.name ?? "未上传"}</div>
                 <div className="mt-3 text-sm text-slate-500">
                   {model ? model.originalFilename : "前往“我的模型”上传第一个模型压缩包。"}
@@ -82,7 +82,7 @@ export default async function DashboardPage() {
                 </div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="text-sm font-semibold text-slate-500">小组榜单位置</div>
+                <div className="text-sm font-semibold text-slate-500">榜单位置</div>
                 <div className="mt-2 text-lg font-bold text-slate-950">{myRanking ? `#${myRankingIndex + 1}` : "未上榜"}</div>
                 <div className="mt-3 text-sm text-slate-500">
                   {myRanking ? `累计总分 ${formatScore(myRanking.totalScore)}` : "完成模型排名后会出现在总榜中。"}
@@ -104,7 +104,7 @@ export default async function DashboardPage() {
                 <tr>
                   <th>排名</th>
                   <th>模型</th>
-                  <th>小组</th>
+                  <th>用户</th>
                   <th>最终得分</th>
                 </tr>
               </thead>

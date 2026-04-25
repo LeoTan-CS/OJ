@@ -1,5 +1,6 @@
 import { buildModelLeaderboardData } from "@/lib/model-leaderboard";
 import { prisma } from "@/lib/prisma";
+import { publicUserSelect } from "@/lib/user-select";
 
 export async function loadModelLeaderboardData() {
   const rankingBatches = await prisma.modelTestBatch.findMany({
@@ -8,7 +9,7 @@ export async function loadModelLeaderboardData() {
       results: {
         include: {
           model: {
-            include: { user: true, group: true },
+            include: { user: { select: publicUserSelect }, group: true },
           },
         },
         orderBy: { createdAt: "asc" },

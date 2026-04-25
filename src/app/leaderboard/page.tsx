@@ -12,7 +12,7 @@ export default async function LeaderboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const leaderboardData = await loadModelLeaderboardData();
-  const leaderboard = user.role === "USER" ? anonymizeModelLeaderboardData(leaderboardData, user.groupName) : leaderboardData;
+  const leaderboard = user.role === "USER" ? anonymizeModelLeaderboardData(leaderboardData, user.username) : leaderboardData;
 
   return (
     <AppShell>

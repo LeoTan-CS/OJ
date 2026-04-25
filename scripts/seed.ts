@@ -59,7 +59,7 @@ async function main() {
     await prisma.announcement.create({
       data: {
         title: announcementTitle,
-        body: "请先上传小组模型压缩包，再执行模型测试和模型排名。排行榜会根据已完成的排名批次自动更新。",
+        body: "请先上传自己的模型压缩包，再执行模型测试和模型排名。排行榜会根据已完成的排名批次自动更新。",
       },
     });
   }

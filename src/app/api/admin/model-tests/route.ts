@@ -3,6 +3,7 @@ import { handle, json, error } from "@/lib/http";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
 import { modelQuestionsPath } from "@/lib/model-upload";
 import { prisma } from "@/lib/prisma";
+import { publicUserSelect } from "@/lib/user-select";
 import { access } from "node:fs/promises";
 
 async function nextBatchId() {
@@ -18,8 +19,8 @@ export async function GET() {
     await requireAdmin();
     const uploadIds = await getSyncedModelUploadIds();
     const [models, batches] = await Promise.all([
-      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: true, group: true, results: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "desc" } }),
-      prisma.modelTestBatch.findMany({ include: { createdBy: true, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: true, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 20 }),
+      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: { select: publicUserSelect }, group: true, results: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "desc" } }),
+      prisma.modelTestBatch.findMany({ include: { createdBy: { select: publicUserSelect }, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: { select: publicUserSelect }, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 20 }),
     ]);
     return json({ models, batches });
   });

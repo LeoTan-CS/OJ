@@ -19,8 +19,8 @@ export async function AppShell({ children, admin = false }: { children: React.Re
           <nav className="flex items-center gap-1">
             <NavLink href={user.role === "USER" ? "/dashboard" : "/admin"}>仪表盘</NavLink>
             <NavLink href="/leaderboard">排行榜</NavLink>
-            {user.role === "USER" && <NavLink href="/models">小组模型</NavLink>}
-            <NavLink href="/account">账号</NavLink>
+            {user.role === "USER" && <NavLink href="/models">我的模型</NavLink>}
+            <NavLink href="/account">个人中心</NavLink>
             <form action={logoutAction}><button type="submit" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">退出</button></form>
           </nav>
         </div>

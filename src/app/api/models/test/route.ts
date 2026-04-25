@@ -14,10 +14,10 @@ const outputLimit = 4000;
 export async function POST() {
   return handle(async () => {
     const user = await requireUser();
-    if (user.role !== "USER" || !user.groupId || !user.groupName) return error("当前账号尚未加入小组，无法测试模型", 400);
+    if (user.role !== "USER") return error("只有普通用户可以测试自己的模型", 400);
     const uploadIds = await getSyncedModelUploadIds();
-    if (!uploadIds.includes(user.groupName)) return error("请先上传小组模型", 400);
-    const model = await prisma.modelArtifact.findFirst({ where: { groupId: user.groupId }, orderBy: { createdAt: "desc" } });
+    if (!uploadIds.includes(user.username)) return error("请先上传模型", 400);
+    const model = await prisma.modelArtifact.findUnique({ where: { userId: user.id } });
     if (!model) return error("请先上传模型", 400);
 
     const runDir = await mkdtemp(join(tmpdir(), "bench-model-test-"));

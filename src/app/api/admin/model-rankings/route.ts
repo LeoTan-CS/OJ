@@ -3,6 +3,7 @@ import { error, handle, json } from "@/lib/http";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
 import { assertJudgeConfig, readDefaultModelRankingQuestions, summarizeRankingQuestions, writeRankingQuestion } from "@/lib/model-ranking";
 import { prisma } from "@/lib/prisma";
+import { publicUserSelect } from "@/lib/user-select";
 
 async function nextRankingBatchId() {
   const dateId = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }).replaceAll("-", "");
@@ -19,8 +20,8 @@ export async function GET() {
     const uploadIds = await getSyncedModelUploadIds();
     const questions = await readDefaultModelRankingQuestions();
     const [models, batches] = await Promise.all([
-      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: true, group: true }, orderBy: { createdAt: "desc" } }),
-      prisma.modelTestBatch.findMany({ where: { kind: "RANKING" }, include: { createdBy: true, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: true, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 10 }),
+      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: { select: publicUserSelect }, group: true }, orderBy: { createdAt: "desc" } }),
+      prisma.modelTestBatch.findMany({ where: { kind: "RANKING" }, include: { createdBy: { select: publicUserSelect }, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: { select: publicUserSelect }, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 10 }),
     ]);
     return json({ questionSummary: summarizeRankingQuestions(questions), questionCount: questions.length, models, batches });
   });

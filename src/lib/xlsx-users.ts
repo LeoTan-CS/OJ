@@ -133,7 +133,6 @@ export function parseUsersXlsx(buffer: Uint8Array): ImportedUserRow[] {
     if (!cells[0] || !cells[1] || !cells[2]) throw new Error(`第 ${rowNumber} 行缺少用户名、初始密码或角色`);
     if (cells[1].length < 4) throw new Error(`第 ${rowNumber} 行初始密码至少 4 位`);
     if (!role) throw new Error(`第 ${rowNumber} 行角色必须是 SUPER_ADMIN、ADMIN、USER 或对应中文名称`);
-    if (role === "USER" && !cells[3]) throw new Error(`第 ${rowNumber} 行普通用户必须填写小组`);
     return [{ rowNumber, username: cells[0], password: cells[1], role, groupName: cells[3] || null }];
   });
 }
