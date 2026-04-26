@@ -40,6 +40,7 @@ export type LeaderboardQuestionEntry = {
   modelId: string;
   modelName: string;
   username: string;
+  groupName: string | null;
   status: string;
   durationMs: number | null;
   peakMemoryKb: number | null;
@@ -56,6 +57,7 @@ export type LeaderboardBatchEntry = {
   modelId: string;
   modelName: string;
   username: string;
+  groupName: string | null;
   isCurrentUser?: boolean;
   status: string;
   questionCount: number;
@@ -132,6 +134,7 @@ export type LeaderboardTotalEntry = {
   modelId: string;
   modelName: string;
   username: string;
+  groupName: string | null;
   isCurrentUser?: boolean;
   appearances: number;
   qualityTotal: number;
@@ -150,12 +153,14 @@ type AnonymousModelIdentity = {
   modelId: string;
   modelName: string;
   username: string;
+  groupName: string | null;
 };
 
 type LeaderboardIdentityFields = {
   modelId: string;
   modelName: string;
   username: string;
+  groupName: string | null;
   isCurrentUser?: boolean;
 };
 
@@ -172,6 +177,7 @@ export type RankingBatchLeaderboardInput = {
     modelId: string;
     modelName: string;
     username: string;
+    groupName: string | null;
     status: string;
     questionResults: ModelQuestionResult[];
   }>;
@@ -298,6 +304,7 @@ export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): L
         modelId: result.modelId,
         modelName: result.modelName,
         username: result.username,
+        groupName: result.groupName,
         status: questionResult?.status ?? result.status,
         durationMs: questionResult?.durationMs ?? null,
         peakMemoryKb: questionResult?.peakMemoryKb ?? null,
@@ -333,6 +340,7 @@ export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): L
       modelId: result.modelId,
       modelName: result.modelName,
       username: result.username,
+      groupName: result.groupName,
       status,
       questionCount,
       successfulQuestions: successfulQuestionCount,
@@ -369,11 +377,13 @@ function normalizeLeaderboardSnapshot(snapshot: LeaderboardSnapshot): Leaderboar
       ...question,
       entries: sortQuestionEntries(question.entries.map((entry) => ({
         ...entry,
+        groupName: entry.groupName ?? null,
         totalScore: weightedTotalScore(entry.qualityScore, entry.timeScore, entry.memoryScore),
       }))),
     })),
     entries: sortBatchEntries(snapshot.entries.map((entry) => ({
       ...entry,
+      groupName: entry.groupName ?? null,
       totalScore: weightedTotalScore(entry.qualityAverage, entry.timeAverage, entry.memoryAverage),
     }))),
   };
@@ -425,6 +435,7 @@ function legacySnapshotToBatch(snapshot: LegacyLeaderboardSnapshot): Leaderboard
       modelId: entry.modelId,
       modelName: entry.modelName,
       username: entry.username,
+      groupName: null,
       status: entry.status,
       questionCount: 1,
       successfulQuestions: entry.status === "SCORED" ? 1 : 0,
@@ -485,6 +496,7 @@ function buildLegacyLeaderboardBatch(batch: RankingBatchSource): LeaderboardBatc
         modelId: result.modelId,
         modelName: result.model.name,
         username: result.model.user.username,
+        groupName: result.model.group?.name ?? null,
         status: result.status,
         questionCount: 1,
         successfulQuestions: result.status === "SCORED" ? 1 : 0,
@@ -500,11 +512,24 @@ function buildLegacyLeaderboardBatch(batch: RankingBatchSource): LeaderboardBatc
 }
 
 export async function buildModelLeaderboardData(batches: RankingBatchSource[]): Promise<ModelLeaderboardData> {
-  const batchEntries = await Promise.all(batches.map(async (batch) => {
+  const identityByModelId = new Map<string, { groupName: string | null }>();
+  for (const batch of batches) {
+    for (const result of batch.results) {
+      if (!identityByModelId.has(result.modelId)) identityByModelId.set(result.modelId, { groupName: result.model.group?.name ?? null });
+    }
+  }
+
+  const batchEntries = (await Promise.all(batches.map(async (batch) => {
     const snapshot = await readLeaderboardSnapshot(batch.id);
     if (snapshot && "version" in snapshot && snapshot.version === 2) return snapshotToBatch(snapshot);
     if (snapshot && "version" in snapshot && snapshot.version === 1) return legacySnapshotToBatch(snapshot);
     return buildLegacyLeaderboardBatch(batch);
+  }))).map((batch) => ({
+    ...batch,
+    entries: batch.entries.map((entry) => ({
+      ...entry,
+      groupName: entry.groupName ?? identityByModelId.get(entry.modelId)?.groupName ?? null,
+    })),
   }));
 
   const totals = new Map<string, LeaderboardTotalEntry>();
@@ -514,6 +539,7 @@ export async function buildModelLeaderboardData(batches: RankingBatchSource[]): 
         modelId: entry.modelId,
         modelName: entry.modelName,
         username: entry.username,
+        groupName: entry.groupName,
         appearances: 0,
         qualityTotal: 0,
         timeTotal: 0,
@@ -552,6 +578,7 @@ function createAnonymousIdentity(index: number): AnonymousModelIdentity {
     modelId: `anonymous-model-${label}`,
     modelName: "***",
     username: "***",
+    groupName: "***",
   };
 }
 
@@ -570,6 +597,7 @@ function anonymizeEntry<Entry extends LeaderboardIdentityFields>(
     modelId: identity.modelId,
     modelName: identity.modelName,
     username: identity.username,
+    groupName: identity.groupName,
     isCurrentUser: false,
   };
 }

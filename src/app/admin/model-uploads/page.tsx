@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { AdminNav, AppShell } from "@/components/shell";
-import { Card } from "@/components/ui";
+import { Card, ModelIdentity } from "@/components/ui";
 import { prisma } from "@/lib/prisma";
 
 function formatDate(value: Date) {
@@ -24,7 +24,7 @@ export default async function AdminModelUploadsPage({
   const validGroupId = groups.some((group) => group.id === selectedGroupId) ? selectedGroupId : "";
   const records = await prisma.modelUploadRecord.findMany({
     where: validGroupId ? { groupId: validGroupId } : {},
-    include: { group: true, user: true },
+    include: { group: true, model: true, user: true },
     orderBy: { uploadedAt: "desc" },
   });
 
@@ -56,8 +56,7 @@ export default async function AdminModelUploadsPage({
           <table>
             <thead>
               <tr>
-                <th>组别标记</th>
-                <th>上传用户</th>
+                <th>模型</th>
                 <th>文件名</th>
                 <th>上传时间</th>
               </tr>
@@ -65,13 +64,12 @@ export default async function AdminModelUploadsPage({
             <tbody>
               {records.map((record) => (
                 <tr key={record.id}>
-                  <td className="font-semibold text-slate-950">{record.group?.name ?? "未分组"}</td>
-                  <td>{record.user.username}</td>
+                  <td><ModelIdentity modelName={record.model.name} username={record.user.username} groupName={record.group?.name ?? null} /></td>
                   <td className="break-all">{record.originalFilename}</td>
                   <td>{formatDate(record.uploadedAt)}</td>
                 </tr>
               ))}
-              {!records.length && <tr><td colSpan={4} className="text-sm text-slate-500">暂无上传记录。</td></tr>}
+              {!records.length && <tr><td colSpan={3} className="text-sm text-slate-500">暂无上传记录。</td></tr>}
             </tbody>
           </table>
         </Card>

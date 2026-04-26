@@ -1,47 +1,128 @@
 import { requireAdmin } from "@/lib/auth";
 import { handle, json, error } from "@/lib/http";
+import { modelConnectivityPrompt, modelConnectivityTimeoutMs, runModelConnectivityTest, type ModelConnectivityResult } from "@/lib/model-connectivity";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
-import { modelQuestionsPath } from "@/lib/model-upload";
 import { prisma } from "@/lib/prisma";
-import { publicUserSelect } from "@/lib/user-select";
-import { access } from "node:fs/promises";
 
-async function nextBatchId() {
-  const dateId = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }).replaceAll("-", "");
-  const existing = await prisma.modelTestBatch.findMany({ where: { id: { startsWith: dateId } }, select: { id: true } });
-  if (!existing.some((batch) => batch.id === dateId)) return dateId;
-  const suffixes = existing.map((batch) => Number(batch.id.match(new RegExp(`^${dateId}-(\\d+)$`))?.[1] ?? 1)).filter((value) => Number.isFinite(value));
-  return `${dateId}-${Math.max(...suffixes, 1) + 1}`;
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+type ConnectivityModel = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  entrypointPath: string;
+  packageDir: string;
+  user: { username: string };
+  group: { name: string } | null;
+};
+
+type StreamEvent =
+  | { type: "start"; total: number; prompt: string; timeoutMs: number }
+  | (PublicModelInfo & { type: "model_start" })
+  | (PublicModelInfo & ModelConnectivityResult & { type: "result" })
+  | { type: "done"; total: number; completed: number; passed: number; failed: number; error?: string };
+
+type PublicModelInfo = {
+  modelId: string;
+  modelName: string;
+  username: string;
+  groupName: string | null;
+  enabled: boolean;
+};
+
+function toPublicModelInfo(model: ConnectivityModel): PublicModelInfo {
+  return {
+    modelId: model.id,
+    modelName: model.name,
+    username: model.user.username,
+    groupName: model.group?.name ?? null,
+    enabled: model.enabled,
+  };
+}
+
+async function loadConnectivityModels(modelId?: string) {
+  const uploadIds = await getSyncedModelUploadIds();
+  const targetIds = modelId ? uploadIds.filter((id) => id === modelId) : uploadIds;
+  return prisma.modelArtifact.findMany({
+    where: { id: { in: targetIds } },
+    include: { user: { select: { username: true } }, group: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 export async function GET() {
   return handle(async () => {
     await requireAdmin();
-    const uploadIds = await getSyncedModelUploadIds();
-    const [models, batches] = await Promise.all([
-      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: { select: publicUserSelect }, group: true, results: { orderBy: { createdAt: "desc" }, take: 1 } }, orderBy: { createdAt: "desc" } }),
-      prisma.modelTestBatch.findMany({ include: { createdBy: { select: publicUserSelect }, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: { select: publicUserSelect }, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 20 }),
-    ]);
-    return json({ models, batches });
+    const models = await loadConnectivityModels();
+    return json({
+      prompt: modelConnectivityPrompt,
+      timeoutMs: modelConnectivityTimeoutMs,
+      models: models.map(toPublicModelInfo),
+    });
   });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   return handle(async () => {
-    const admin = await requireAdmin();
-    await access(modelQuestionsPath).catch(() => { throw new Response(JSON.stringify({ error: `测试集不存在: ${modelQuestionsPath}` }), { status: 400 }); });
-    const uploadIds = await getSyncedModelUploadIds();
-    const models = await prisma.modelArtifact.findMany({ where: { id: { in: uploadIds }, enabled: true }, select: { id: true } });
-    if (models.length === 0) return error("没有启用的模型可测试", 400);
-    const batch = await prisma.modelTestBatch.create({
-      data: {
-        id: await nextBatchId(),
-        createdById: admin.id,
-        status: "PENDING",
-        results: { create: models.map((model) => ({ modelId: model.id })) },
+    await requireAdmin();
+    const body: unknown = await request.json().catch(() => ({}));
+    const requestedModelId = body && typeof body === "object" && "modelId" in body ? body.modelId : undefined;
+    const modelId = typeof requestedModelId === "string" && requestedModelId.trim() ? requestedModelId.trim() : undefined;
+    const models = await loadConnectivityModels(modelId);
+    if (!models.length) return error(modelId ? "没有找到该模型或模型未上传" : "没有已上传的模型可测试", 400);
+
+    const encoder = new TextEncoder();
+    const encode = (event: StreamEvent) => encoder.encode(`${JSON.stringify(event)}\n`);
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let completed = 0;
+        let passed = 0;
+        let failed = 0;
+
+        const enqueue = (event: StreamEvent) => controller.enqueue(encode(event));
+
+        try {
+          enqueue({ type: "start", total: models.length, prompt: modelConnectivityPrompt, timeoutMs: modelConnectivityTimeoutMs });
+
+          for (const model of models) {
+            if (request.signal.aborted) break;
+            const modelInfo = toPublicModelInfo(model);
+            enqueue({ type: "model_start", ...modelInfo });
+            const result = await runModelConnectivityTest({
+              entrypointPath: model.entrypointPath,
+              workingDir: model.packageDir,
+              timeoutMs: modelConnectivityTimeoutMs,
+            });
+            completed += 1;
+            if (result.status === "SCORED") passed += 1;
+            else failed += 1;
+            enqueue({ type: "result", ...modelInfo, ...result });
+          }
+
+          enqueue({ type: "done", total: models.length, completed, passed, failed });
+        } catch (streamError) {
+          enqueue({
+            type: "done",
+            total: models.length,
+            completed,
+            passed,
+            failed,
+            error: streamError instanceof Error ? streamError.message : "模型连通性测试中断",
+          });
+        } finally {
+          controller.close();
+        }
       },
-      include: { results: true },
     });
-    return json({ batch });
+
+    return new Response(stream, {
+      headers: {
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "X-Accel-Buffering": "no",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   });
 }

@@ -10,7 +10,6 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 const execFileAsync = promisify(execFile);
 
 export const modelUploadsRoot = join(/*turbopackIgnore: true*/ process.cwd(), "uploads", "models");
-export const modelQuestionsPath = join(/*turbopackIgnore: true*/ process.cwd(), "data", "model-benchmark", "questions.json");
 export const modelRuntimeLimitMs = Math.min(Number(process.env.MODEL_TEST_TIMEOUT_MS ?? 300000), 300000);
 
 export function assertModelStorageId(id: string) {
@@ -55,7 +54,7 @@ export function modelRunPaths(modelId: string, batchId: string) {
 
 export async function modelUploadExists(id: string) {
   const paths = modelStoragePaths(id);
-  await Promise.all([access(paths.archivePath), access(paths.packageDir)]);
+  await access(paths.packageDir);
   return true;
 }
 
@@ -111,17 +110,20 @@ async function findEntrypointInPackageDir(packageDir: string) {
 export async function readModelUploadMetadata(id: string) {
   const paths = modelStoragePaths(id);
   await modelUploadExists(id);
-  const [archiveStats, entrypointPath] = await Promise.all([
-    stat(paths.archivePath),
+  const [packageStats, archiveExists, entrypointPath] = await Promise.all([
+    stat(paths.packageDir),
+    pathExists(paths.archivePath),
     findEntrypointInPackageDir(paths.packageDir),
   ]);
+  const archiveStats = archiveExists ? await stat(paths.archivePath) : null;
 
   return {
     ...paths,
-    originalFilename: basename(paths.archivePath),
+    archivePath: archiveExists ? paths.archivePath : "",
+    originalFilename: archiveExists ? basename(paths.archivePath) : `${id}.zip`,
     entrypointPath,
     workingDir: dirname(entrypointPath),
-    createdAt: archiveStats.mtime,
+    createdAt: archiveStats?.mtime ?? packageStats.mtime,
   };
 }
 
@@ -144,10 +146,27 @@ export function getModelFile(formData: FormData) {
   return value.size > 0 ? value : null;
 }
 
-export function parseModelName(formData: FormData, file: File) {
-  const value = formData.get("name");
-  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 120);
-  return basename(file.name).replace(/\.zip$/i, "").slice(0, 120) || "模型";
+export const modelNameMaxLength = 120;
+
+export function normalizeModelName(value: unknown) {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name) return null;
+  if (name.length > modelNameMaxLength) throw new Error(`模型名称不能超过 ${modelNameMaxLength} 个字符`);
+  if (/[\u0000-\u001F\u007F]/.test(name)) throw new Error("模型名称不能包含控制字符");
+  return name;
+}
+
+export function modelNameOrFallback(value: unknown, fallback: string) {
+  return normalizeModelName(value) ?? normalizeModelName(fallback) ?? "模型";
+}
+
+export function defaultModelNameFromFilename(filename: string) {
+  return modelNameOrFallback(basename(filename).replace(/\.zip$/i, "").slice(0, modelNameMaxLength), "模型");
+}
+
+export function parseModelName(formData: FormData, fallback: string) {
+  return modelNameOrFallback(formData.get("modelName") ?? formData.get("name"), fallback);
 }
 
 function assertZipFilename(filename: string) {
@@ -212,12 +231,11 @@ async function commitModelUpload(id: string, staged: Awaited<ReturnType<typeof v
   await mkdir(paths.runsDir, { recursive: true });
   await rm(paths.archivePath, { force: true });
   await rm(paths.packageDir, { recursive: true, force: true });
-  await rename(staged.archivePath, paths.archivePath);
   await rename(staged.packageDir, paths.packageDir);
   await rm(staged.root, { recursive: true, force: true });
 
   const entrypointPath = join(paths.packageDir, entrypointRelativePath);
-  return { ...paths, entrypointPath, workingDir: dirname(entrypointPath) };
+  return { ...paths, archivePath: "", entrypointPath, workingDir: dirname(entrypointPath) };
 }
 
 export async function saveModelUpload(id: string, file: File) {

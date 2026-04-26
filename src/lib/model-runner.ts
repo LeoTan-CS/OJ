@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,53 +73,38 @@ function buildQuestionTimeout(question: ModelQuestion): ModelQuestionResult {
   return { id: question.id, question: question.question, status: "TIME_LIMIT_EXCEEDED", error: modelTimeoutMessage, durationMs: null, peakMemoryKb: null };
 }
 
-async function runPromptQuestions({
-  entrypointPath,
-  workingDir,
-  outputPath,
-  promptQuestions,
-  deadline,
-  started,
-}: {
-  entrypointPath: string;
-  workingDir: string;
-  outputPath: string;
-  promptQuestions: ModelQuestion[];
-  deadline: number;
-  started: number;
-}) {
-  const answers: ModelQuestionResult[] = [];
-  let peakMemoryKb: number | undefined;
-  for (const question of promptQuestions) {
-    if (remainingMs(deadline) <= 0) {
-      answers.push(buildQuestionTimeout(question));
-      continue;
-    }
-    const prompt = await runPromptPython({
-      entrypointPath,
+function normalizePromptQuestionResult(question: ModelQuestion, result: ModelRunResult): ModelQuestionResult {
+  if (result.status !== "SCORED") return normalizeQuestionFailure(question, result);
+
+  const answer = result.stdout.trim();
+  if (!answer) {
+    return {
+      id: question.id,
       question: question.question,
-      workingDir,
-      deadline,
-      started,
-    });
-    peakMemoryKb = maxKnownNumber(peakMemoryKb, prompt.peakMemoryKb);
-    if (prompt.status === "SCORED") {
-      answers.push({
-        id: question.id,
-        question: question.question,
-        status: "SCORED",
-        answer: prompt.stdout.trim(),
-        error: prompt.stderr.trim() || null,
-        durationMs: prompt.durationMs,
-        peakMemoryKb: prompt.peakMemoryKb ?? null,
-      });
-      continue;
-    }
-    answers.push(normalizeQuestionFailure(question, prompt));
+      status: "INVALID_OUTPUT",
+      answer: null,
+      error: (result.stderr.trim() || "模型没有向 stdout 输出回答").slice(0, outputLimit),
+      durationMs: result.durationMs,
+      peakMemoryKb: result.peakMemoryKb ?? null,
+    };
   }
-  const outputText = JSON.stringify({ answers }, null, 2);
-  await writeFile(outputPath, outputText);
-  return { status: "SCORED", stdout: outputText, stderr: "", durationMs: Date.now() - started, peakMemoryKb, outputText } satisfies ModelRunResult;
+
+  return {
+    id: question.id,
+    question: question.question,
+    status: "SCORED",
+    answer,
+    error: result.stderr.trim() || null,
+    durationMs: result.durationMs,
+    peakMemoryKb: result.peakMemoryKb ?? null,
+  };
+}
+
+function deriveRunStatus(questionResults: ModelQuestionResult[]): ModelRunStatus {
+  if (questionResults.every((item) => item.status === "SCORED")) return "SCORED";
+  return questionResults.find((item) => item.status === "TIME_LIMIT_EXCEEDED")?.status
+    ?? questionResults.find((item) => item.status === "RUNTIME_ERROR")?.status
+    ?? "INVALID_OUTPUT";
 }
 
 function normalizeQuestionFailure(question: ModelQuestion, result: ModelRunResult): ModelQuestionResult {
@@ -133,10 +118,6 @@ function normalizeQuestionFailure(question: ModelQuestion, result: ModelRunResul
     durationMs: result.durationMs,
     peakMemoryKb: result.peakMemoryKb ?? null,
   };
-}
-
-function isUnrecognizedArgumentsError(result: ModelRunResult) {
-  return result.status === "RUNTIME_ERROR" && result.stderr.includes("unrecognized arguments");
 }
 
 async function runPromptPython({
@@ -155,57 +136,20 @@ async function runPromptPython({
   return runPython([entrypointPath, question], workingDir, deadline, started);
 }
 
-function pickSingleQuestionResult(outputText: string, question: ModelQuestion, execution: ModelRunResult): ModelQuestionResult {
-  const rows = readModelQuestionResults(outputText);
-  const picked = rows.find((item) => item.id === question.id)
-    ?? rows.find((item) => item.question === question.question)
-    ?? rows[0];
-  if (!picked) throw new Error("Model output does not contain any answer rows");
-  return {
-    id: question.id,
-    question: question.question,
-    status: picked.status,
-    answer: picked.answer ?? null,
-    error: picked.error ?? (execution.stderr.trim() || null),
-    durationMs: picked.durationMs ?? execution.durationMs,
-    peakMemoryKb: picked.peakMemoryKb ?? execution.peakMemoryKb ?? null,
-  };
-}
-
-async function runSingleQuestionWithIOFallback({
+async function runSingleQuestionWithPrompt({
   entrypointPath,
   workingDir,
   question,
-  tempDir,
   timeoutMs,
 }: {
   entrypointPath: string;
   workingDir: string;
   question: ModelQuestion;
-  tempDir: string;
   timeoutMs: number;
 }): Promise<ModelQuestionResult> {
   const started = Date.now();
   const deadline = started + timeoutMs;
   if (remainingMs(deadline) <= 0) return buildQuestionTimeout(question);
-
-  const inputPath = join(tempDir, "question.json");
-  const outputPath = join(tempDir, "answer.json");
-  await writeFile(inputPath, JSON.stringify({ questions: [question] }, null, 2));
-  await rm(outputPath, { force: true }).catch(() => undefined);
-
-  const standard = await runPython([entrypointPath, "--input", inputPath, "--output", outputPath], workingDir, deadline, started);
-  if (standard.status === "TIME_LIMIT_EXCEEDED") return normalizeQuestionFailure(question, standard);
-
-  if (standard.status === "SCORED") {
-    const outputText = await readFile(outputPath, "utf8");
-    validateModelOutput(outputText);
-    return pickSingleQuestionResult(outputText, question, { ...standard, outputText });
-  }
-
-  if (!isUnrecognizedArgumentsError(standard)) {
-    return normalizeQuestionFailure(question, standard);
-  }
 
   const prompt = await runPromptPython({
     entrypointPath,
@@ -214,16 +158,7 @@ async function runSingleQuestionWithIOFallback({
     deadline,
     started,
   });
-  if (prompt.status !== "SCORED") return normalizeQuestionFailure(question, prompt);
-  return {
-    id: question.id,
-    question: question.question,
-    status: "SCORED",
-    answer: prompt.stdout.trim(),
-    error: prompt.stderr.trim() || null,
-    durationMs: prompt.durationMs,
-    peakMemoryKb: prompt.peakMemoryKb ?? null,
-  };
+  return normalizePromptQuestionResult(question, prompt);
 }
 
 function runPython(args: string[], cwd: string, deadline: number, started: number): Promise<ModelRunResult> {
@@ -262,13 +197,6 @@ function runPython(args: string[], cwd: string, deadline: number, started: numbe
       void finish({ status: "RUNTIME_ERROR", stdout, stderr: (stderr || err.message).slice(-outputLimit), error: (stderr || err.message).slice(0, outputLimit), durationMs: Date.now() - runStartedAt });
     });
   });
-}
-
-export function validateModelOutput(text: string) {
-  const parsed = JSON.parse(text);
-  if (Array.isArray(parsed)) return;
-  if (parsed && typeof parsed === "object" && Array.isArray((parsed as { answers?: unknown }).answers)) return;
-  throw new Error("Model output must be a JSON array or { answers: [...] }");
 }
 
 export function readModelQuestionResults(text: string): ModelQuestionResult[] {
@@ -313,24 +241,6 @@ export function readModelQuestions(text: string): ModelQuestion[] {
   });
 }
 
-export async function runModelWithFallback({ entrypointPath, workingDir, inputPath, outputPath, questions, timeoutMs, preferPromptMode = false }: { entrypointPath: string; workingDir: string; inputPath: string; outputPath: string; questions?: ModelQuestion[]; timeoutMs: number; preferPromptMode?: boolean }): Promise<ModelRunResult> {
-  const started = Date.now();
-  const deadline = started + timeoutMs;
-  const promptQuestions = questions ?? readModelQuestions(await readFile(inputPath, "utf8"));
-  if (preferPromptMode) return runPromptQuestions({ entrypointPath, workingDir, outputPath, promptQuestions, deadline, started });
-  const standard = await runPython([entrypointPath, "--input", inputPath, "--output", outputPath], workingDir, deadline, started);
-  if (standard.status === "TIME_LIMIT_EXCEEDED") return standard;
-  if (!isUnrecognizedArgumentsError(standard)) {
-    if (standard.status !== "SCORED") return standard;
-    const outputText = await readFile(outputPath, "utf8");
-    validateModelOutput(outputText);
-    return { ...standard, outputText, durationMs: Date.now() - started };
-  }
-
-  const prompt = await runPromptQuestions({ entrypointPath, workingDir, outputPath, promptQuestions, deadline, started });
-  return { ...prompt, peakMemoryKb: maxKnownNumber(standard.peakMemoryKb, prompt.peakMemoryKb) };
-}
-
 export async function runModelQuestionsIndividually({
   entrypointPath,
   workingDir,
@@ -345,32 +255,26 @@ export async function runModelQuestionsIndividually({
   timeoutMs: number;
 }): Promise<ModelRunResult> {
   const started = Date.now();
-  const tempDir = await mkdtemp(join(tmpdir(), "bench-model-question-"));
-  try {
-    const answers: ModelQuestionResult[] = [];
-    let peakMemoryKb: number | undefined;
-    for (const question of questions) {
-      const result = await runSingleQuestionWithIOFallback({
-        entrypointPath,
-        workingDir,
-        question,
-        tempDir,
-        timeoutMs,
-      });
-      answers.push(result);
-      peakMemoryKb = maxKnownNumber(peakMemoryKb, result.peakMemoryKb);
-    }
-    const outputText = JSON.stringify({ answers }, null, 2);
-    await writeFile(outputPath, outputText);
-    return {
-      status: "SCORED",
-      stdout: outputText,
-      stderr: "",
-      durationMs: Date.now() - started,
-      peakMemoryKb,
-      outputText,
-    };
-  } finally {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  const answers: ModelQuestionResult[] = [];
+  let peakMemoryKb: number | undefined;
+  for (const question of questions) {
+    const result = await runSingleQuestionWithPrompt({
+      entrypointPath,
+      workingDir,
+      question,
+      timeoutMs,
+    });
+    answers.push(result);
+    peakMemoryKb = maxKnownNumber(peakMemoryKb, result.peakMemoryKb);
   }
+  const outputText = JSON.stringify({ answers }, null, 2);
+  await writeFile(outputPath, outputText);
+  return {
+    status: deriveRunStatus(answers),
+    stdout: outputText,
+    stderr: "",
+    durationMs: Date.now() - started,
+    peakMemoryKb,
+    outputText,
+  };
 }

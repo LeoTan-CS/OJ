@@ -30,7 +30,7 @@ export function DeleteButton({ endpoint }: { endpoint: string }) {
   return <button type="button" onClick={del} className="text-sm font-medium text-red-600">删除</button>;
 }
 
-export function ModelUploadForm() {
+export function ModelUploadForm({ initialName = "" }: { initialName?: string }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -44,11 +44,13 @@ export function ModelUploadForm() {
     const formData = new FormData(form);
     const file = formData.get("modelFile");
     if (!(file instanceof File) || file.size === 0) return setError("请选择模型压缩包");
+    const modelName = String(formData.get("modelName") ?? "").trim();
+    if (!modelName) return setError("请填写模型名称");
     setPending(true);
     setError("");
     setMessage("");
     setProgress(0);
-    const res = await uploadModelFile(file, setProgress);
+    const res = await uploadModelFile(file, modelName, setProgress);
     setPending(false);
     if (!res.ok) { const data = await res.json().catch(() => ({})); setProgress(0); return setError(data.error ?? "上传失败"); }
     form.reset();
@@ -57,15 +59,16 @@ export function ModelUploadForm() {
     setMessage("模型上传成功，已替换当前模型。");
     router.refresh();
   }
-  return <form onSubmit={submit} className="grid gap-4"><label className="group cursor-pointer rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/80 p-5 transition hover:border-slate-400 hover:bg-white"><input name="modelFile" type="file" accept=".zip,application/zip" required className="sr-only" onChange={(event) => { setError(""); setMessage(""); setProgress(0); setSelectedFile(event.target.files?.[0] ?? null); }} /><div className="flex items-start gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-xl shadow-sm ring-1 ring-slate-200 transition group-hover:scale-105">⬆️</div><div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-950">{selectedFile ? selectedFile.name : "选择或拖入模型压缩包"}</div><div className="mt-1 text-xs leading-5 text-slate-500">{selectedFile ? `${(selectedFile.size / 1024 / 1024 / 1024).toFixed(2)} GB · 点击可重新选择` : "支持 .zip 文件，上传后会覆盖当前用户的旧模型。"}</div>{selectedFile && <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">文件已就绪</div>}</div></div></label>{pending && <div className="rounded-2xl bg-slate-50 p-4"><div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-600"><span>上传进度</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-slate-950 transition-all duration-300" style={{ width: `${progress}%` }} /></div><p className="mt-2 text-xs text-slate-500">大模型上传完成后还需要服务端解压校验，请保持页面打开。</p></div>}{message && <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{message}</div>}{error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}<button type="submit" disabled={pending} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? progress >= 100 ? "服务端处理中..." : "上传中，请勿关闭页面..." : selectedFile ? "上传并替换我的模型" : "选择文件后上传"}</button></form>;
+  return <form onSubmit={submit} className="grid gap-4"><Field label="模型名称"><input name="modelName" defaultValue={initialName} maxLength={120} required placeholder="例如：我的问答模型" /></Field><label className="group cursor-pointer rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/80 p-5 transition hover:border-slate-400 hover:bg-white"><input name="modelFile" type="file" accept=".zip,application/zip" required className="sr-only" onChange={(event) => { setError(""); setMessage(""); setProgress(0); setSelectedFile(event.target.files?.[0] ?? null); }} /><div className="flex items-start gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-xl shadow-sm ring-1 ring-slate-200 transition group-hover:scale-105">⬆️</div><div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-950">{selectedFile ? selectedFile.name : "选择或拖入模型压缩包"}</div><div className="mt-1 text-xs leading-5 text-slate-500">{selectedFile ? `${(selectedFile.size / 1024 / 1024 / 1024).toFixed(2)} GB · 点击可重新选择` : "支持 .zip 文件，上传后会覆盖当前用户的旧模型。"}</div>{selectedFile && <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">文件已就绪</div>}</div></div></label>{pending && <div className="rounded-2xl bg-slate-50 p-4"><div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-600"><span>上传进度</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-slate-950 transition-all duration-300" style={{ width: `${progress}%` }} /></div><p className="mt-2 text-xs text-slate-500">大模型上传完成后还需要服务端解压校验，请保持页面打开。</p></div>}{message && <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{message}</div>}{error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}<button type="submit" disabled={pending} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? progress >= 100 ? "服务端处理中..." : "上传中，请勿关闭页面..." : selectedFile ? "上传并替换我的模型" : "选择文件后上传"}</button></form>;
 }
 
-function uploadModelFile(file: File, onProgress: (progress: number) => void): Promise<Response> {
+function uploadModelFile(file: File, modelName: string, onProgress: (progress: number) => void): Promise<Response> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/models");
     xhr.setRequestHeader("Content-Type", "application/zip");
     xhr.setRequestHeader("X-Model-Filename", encodeURIComponent(file.name));
+    xhr.setRequestHeader("X-Model-Name", encodeURIComponent(modelName));
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
     };
@@ -99,22 +102,6 @@ export function UserImportForm() {
     router.refresh();
   }
   return <form onSubmit={submit} className="grid gap-4"><Field label="账号 Excel"><input name="usersFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></Field><p className="text-xs text-slate-500">从左到右四列依次为：用户名、初始密码、角色、小组。角色支持 SUPER_ADMIN / ADMIN / USER；小组为可选标记，填写时必须已存在。</p>{error && <p className="text-sm text-red-600">{error}</p>}{message && <p className="text-sm text-emerald-700">{message}</p>}<Button>{pending ? "导入中..." : "批量导入账号"}</Button></form>;
-}
-
-export function ModelTestButton() {
-  const router = useRouter();
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  async function run() {
-    if (!confirm("确定对所有启用模型创建一轮测试？")) return;
-    setPending(true);
-    setError("");
-    const res = await fetch("/api/admin/model-tests", { method: "POST" });
-    setPending(false);
-    if (!res.ok) { const data = await res.json().catch(() => ({})); return setError(data.error ?? "创建测试失败"); }
-    router.refresh();
-  }
-  return <div className="grid gap-2"><button type="button" onClick={run} disabled={pending} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{pending ? "创建中..." : "测试全部启用模型"}</button>{error && <p className="text-sm text-red-600">{error}</p>}</div>;
 }
 
 export function ModelRankingButton() {

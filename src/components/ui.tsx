@@ -22,6 +22,7 @@ export function StatusBadge({ status }: { status: string }) {
     REJECTED: "bg-red-100 text-red-700",
     RUNNING: "bg-blue-100 text-blue-700",
     PENDING: "bg-slate-100 text-slate-700",
+    INTERRUPTED: "bg-amber-100 text-amber-700",
     PARTIAL: "bg-amber-100 text-amber-700",
     COMPLETED: "bg-emerald-100 text-emerald-700",
     FAILED: "bg-rose-100 text-rose-700",
@@ -32,4 +33,16 @@ export function StatusBadge({ status }: { status: string }) {
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="grid gap-1 text-sm font-medium text-slate-700"><span>{label}</span>{children}</label>;
+}
+
+export function ModelIdentity({
+  groupName,
+  modelName,
+  username,
+}: {
+  groupName?: string | null;
+  modelName: string;
+  username: string;
+}) {
+  return <div><div className="font-semibold text-slate-950">{modelName}</div><div className="text-xs font-medium text-slate-500">用户 {username} · 组别 {groupName ?? "未分组"}</div></div>;
 }

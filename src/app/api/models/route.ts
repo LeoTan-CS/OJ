@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { handle, json, error } from "@/lib/http";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
-import { assertModelStorageId, getModelFile, saveModelUpload, saveModelUploadStream } from "@/lib/model-upload";
+import { assertModelStorageId, defaultModelNameFromFilename, getModelFile, modelNameOrFallback, parseModelName, saveModelUpload, saveModelUploadStream } from "@/lib/model-upload";
 import { prisma } from "@/lib/prisma";
 import type { SessionUser } from "@/lib/types";
 import { publicUserSelect } from "@/lib/user-select";
@@ -62,6 +62,20 @@ async function createUploadRecord({
   });
 }
 
+function decodeHeaderValue(value: string | null) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function nameErrorResponse(nameError: unknown) {
+  if (nameError instanceof Error) return error(nameError.message, 400);
+  throw nameError;
+}
+
 export async function GET() {
   return handle(async () => {
     const user = await requireUser();
@@ -80,14 +94,20 @@ export async function POST(request: Request) {
     const user = await requireUser();
     const { group, storageId } = await requireModelOwner(user);
     const previousModel = await prisma.modelArtifact.findUnique({ where: { id: storageId } });
-    const directFilename = decodeURIComponent(request.headers.get("x-model-filename") ?? "");
+    const directFilename = decodeHeaderValue(request.headers.get("x-model-filename"));
 
     if (request.headers.get("content-type") === "application/zip" && directFilename && request.body) {
+      let modelName: string;
+      try {
+        modelName = modelNameOrFallback(decodeHeaderValue(request.headers.get("x-model-name")), defaultModelNameFromFilename(directFilename));
+      } catch (nameError) {
+        return nameErrorResponse(nameError);
+      }
       const uploadedAt = new Date();
       const model = await prisma.modelArtifact.upsert({
         where: { id: storageId },
-        update: { userId: user.id, groupId: group?.id ?? null, name: storageId, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
-        create: { id: storageId, userId: user.id, groupId: group?.id ?? null, name: storageId, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
+        update: { userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
+        create: { id: storageId, userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
       });
       try {
         const paths = await saveModelUploadStream(storageId, directFilename, request.body);
@@ -112,11 +132,17 @@ export async function POST(request: Request) {
     if (!formData) return error("上传请求无法解析，可能是文件过大或请求被截断，请重新选择较小的 .zip 文件后上传", 400);
     const file = getModelFile(formData);
     if (!file) return error("请上传模型 .zip 文件", 400);
+    let modelName: string;
+    try {
+      modelName = parseModelName(formData, defaultModelNameFromFilename(file.name));
+    } catch (nameError) {
+      return nameErrorResponse(nameError);
+    }
     const uploadedAt = new Date();
     const model = await prisma.modelArtifact.upsert({
       where: { id: storageId },
-      update: { userId: user.id, groupId: group?.id ?? null, name: storageId, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
-      create: { id: storageId, userId: user.id, groupId: group?.id ?? null, name: storageId, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
+      update: { userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
+      create: { id: storageId, userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
     });
     try {
       const paths = await saveModelUpload(storageId, file);

@@ -53,7 +53,6 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
         update: {
           userId: user.id,
           groupId: user.groupId,
-          name: uploadId,
           archivePath: metadata.archivePath,
           packageDir: metadata.packageDir,
           entrypointPath: metadata.entrypointPath,

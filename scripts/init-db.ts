@@ -257,6 +257,11 @@ async function backfillModelUploadRecords() {
   }
 }
 
+async function deleteLegacyModelTestBatches() {
+  const deleted = await prisma.modelTestBatch.deleteMany({ where: { kind: { not: "RANKING" } } });
+  if (deleted.count > 0) console.log(`Deleted ${deleted.count} legacy non-ranking model test batches.`);
+}
+
 async function main() {
   await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = ON;`);
 
@@ -288,8 +293,9 @@ async function main() {
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ModelTestResult_batchId_modelId_key" ON "ModelTestResult"("batchId", "modelId");`);
 
   await backfillModelUploadRecords();
+  await deleteLegacyModelTestBatches();
 
-  console.log("SQLite tables are ready. Existing data was preserved.");
+  console.log("SQLite tables are ready. Ranking data was preserved.");
 }
 
 main().finally(() => prisma.$disconnect());

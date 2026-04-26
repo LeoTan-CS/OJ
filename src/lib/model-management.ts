@@ -52,7 +52,7 @@ export async function renameUserModelIdentity({
   const newId = newUsername;
   const mappings = pathMapping(oldId, newId);
   if (!mappings.length) {
-    const updated = await db.modelArtifact.update({ where: { id: oldId }, data: { name: newId, groupId: groupId ?? null } });
+    const updated = await db.modelArtifact.update({ where: { id: oldId }, data: { groupId: groupId ?? null } });
     await db.modelUploadRecord.updateMany({ where: { modelId: oldId }, data: { groupId: groupId ?? null } });
     return updated;
   }
@@ -68,7 +68,6 @@ export async function renameUserModelIdentity({
         where: { id: oldId },
         data: {
           id: newId,
-          name: newId,
           groupId: groupId ?? null,
           archivePath: replaceModelIdentityText(model.archivePath, mappings),
           packageDir: replaceModelIdentityText(model.packageDir, mappings),

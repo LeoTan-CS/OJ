@@ -1,28 +1,17 @@
 import { PrismaClient } from "@prisma/client";
+import { loadEnvConfig } from "@next/env";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { buildLeaderboardSnapshot } from "../src/lib/model-leaderboard";
-import { modelQuestionsPath, modelRunPaths, modelRuntimeLimitMs } from "../src/lib/model-upload";
-import { modelTimeoutMessage, readModelQuestionResults, readModelQuestions, runModelQuestionsIndividually, runModelWithFallback, type ModelQuestionResult } from "../src/lib/model-runner";
+import { modelRunPaths, modelRuntimeLimitMs } from "../src/lib/model-upload";
+import { modelTimeoutMessage, readModelQuestionResults, readModelQuestions, runModelQuestionsIndividually, type ModelQuestionResult } from "../src/lib/model-runner";
 import { createEmptyJudgeReport, judgeModelRanking, modelRankingPaths, modelRankingQuestionSourceLabel, type JudgeBatchReport, type JudgeQuestionReport, type RankingJudgeBatchInput, writeJudgeInput, writeLeaderboardSnapshot } from "../src/lib/model-ranking";
+
+loadEnvConfig(process.cwd());
 
 const prisma = new PrismaClient();
 const pollMs = 1000;
 const outputLimit = 4000;
-
-async function refreshBatchStatus(batchId: string) {
-  const [batch, results] = await Promise.all([
-    prisma.modelTestBatch.findUnique({ where: { id: batchId }, select: { startedAt: true, kind: true, question: true, judgeStatus: true } }),
-    prisma.modelTestResult.findMany({ where: { batchId }, select: { status: true } }),
-  ]);
-  if (!batch) return;
-  if (batch.kind === "RANKING") return;
-  if (results.some((result) => result.status === "RUNNING" || result.status === "PENDING")) {
-    await prisma.modelTestBatch.update({ where: { id: batchId }, data: { status: "RUNNING", startedAt: batch.startedAt ?? new Date() } });
-    return;
-  }
-  await prisma.modelTestBatch.update({ where: { id: batchId }, data: { status: "COMPLETED", completedAt: new Date() } });
-}
 
 function averageMetric(values: Array<number | null | undefined>) {
   const valid = values.filter((value): value is number => value != null && Number.isFinite(value));
@@ -46,6 +35,7 @@ type ParsedRankingModelResult = {
   modelId: string;
   modelName: string;
   username: string;
+  groupName: string | null;
   status: string;
   error: string | null;
   outputPath: string | null;
@@ -205,6 +195,7 @@ async function buildRankingExecutionState(batch: LoadedRankingBatch) {
       modelId: result.modelId,
       modelName: result.model.name,
       username: modelOwnerName(result.model),
+      groupName: result.model.group?.name ?? null,
       status: result.status,
       error: result.error,
       outputPath: result.outputPath ?? defaultOutputPath,
@@ -478,60 +469,6 @@ async function processRankingBatch(batchId: string) {
   }
 }
 
-async function testModelResult(id: string) {
-  const result = await prisma.modelTestResult.findUnique({ where: { id }, include: { model: true, batch: true } });
-  if (!result) return;
-  const startedAt = new Date();
-  await prisma.modelTestResult.update({ where: { id }, data: { status: "RUNNING", startedAt, error: null } });
-  await prisma.modelTestBatch.update({ where: { id: result.batchId }, data: { status: "RUNNING", startedAt: result.batch.startedAt ?? startedAt } });
-  const paths = modelRunPaths(result.modelId, result.batchId);
-  try {
-    await mkdir(paths.runDir, { recursive: true });
-    const isRanking = result.batch.kind === "RANKING";
-    const inputPath = isRanking ? resolve(modelRankingPaths(result.batchId).questionPath) : modelQuestionsPath;
-    const execution = isRanking
-      ? await runModelQuestionsIndividually({
-        entrypointPath: result.model.entrypointPath,
-        workingDir: result.model.packageDir,
-        outputPath: paths.outputPath,
-        questions: readModelQuestions(await readFile(inputPath, "utf8")),
-        timeoutMs: modelRuntimeLimitMs,
-      })
-      : await runModelWithFallback({
-        entrypointPath: result.model.entrypointPath,
-        workingDir: result.model.packageDir,
-        inputPath,
-        outputPath: paths.outputPath,
-        timeoutMs: modelRuntimeLimitMs,
-      });
-    if (execution.status !== "SCORED") {
-      await prisma.modelTestResult.update({ where: { id }, data: { status: execution.status, durationMs: execution.durationMs, peakMemoryKb: execution.peakMemoryKb ?? null, error: (execution.error || execution.stderr || execution.stdout || (execution.status === "TIME_LIMIT_EXCEEDED" ? modelTimeoutMessage : execution.status)).slice(0, outputLimit), completedAt: new Date() } });
-      await refreshBatchStatus(result.batchId);
-      return;
-    }
-    const output = execution.outputText ?? await readFile(paths.outputPath, "utf8");
-    const questionResults = isRanking ? readModelQuestionResults(output) : [];
-    const successfulQuestionResults = questionResults.filter((item) => item.status === "SCORED");
-    const durationMs = isRanking ? averageMetric(successfulQuestionResults.map((item) => item.durationMs ?? null)) : execution.durationMs;
-    const peakMemoryKb = isRanking ? averageMetric(successfulQuestionResults.map((item) => item.peakMemoryKb ?? null)) : execution.peakMemoryKb ?? null;
-    await prisma.modelTestResult.update({
-      where: { id },
-      data: {
-        status: "SCORED",
-        durationMs,
-        peakMemoryKb,
-        outputPath: resolve(paths.outputPath),
-        outputPreview: output.slice(0, outputLimit),
-        error: execution.stderr.slice(0, outputLimit) || null,
-        completedAt: new Date(),
-      },
-    });
-  } catch (err) {
-    await prisma.modelTestResult.update({ where: { id }, data: { status: "INVALID_OUTPUT", error: (err instanceof Error ? err.message : "Invalid model output").slice(0, outputLimit), completedAt: new Date() } });
-  }
-  await refreshBatchStatus(result.batchId);
-}
-
 async function tick() {
   const rankingBatch = await prisma.modelTestBatch.findFirst({
     where: {
@@ -547,17 +484,12 @@ async function tick() {
     await processRankingBatch(rankingBatch.id);
     return;
   }
-  const modelResult = await prisma.modelTestResult.findFirst({
-    where: { status: "PENDING", batch: { kind: { not: "RANKING" } } },
-    orderBy: { createdAt: "asc" },
-  });
-  if (modelResult) await testModelResult(modelResult.id);
 }
 
 async function recoverInterruptedWork() {
-  await prisma.modelTestResult.updateMany({ where: { status: "RUNNING" }, data: { status: "PENDING", error: "Worker restarted before this model finished; retrying." } });
-  await prisma.modelTestBatch.updateMany({ where: { status: "RUNNING" }, data: { status: "PENDING" } });
-  await prisma.modelTestBatch.updateMany({ where: { judgeStatus: "RUNNING" }, data: { judgeStatus: "PENDING", judgeError: "Worker restarted before judge finished; retrying." } });
+  await prisma.modelTestResult.updateMany({ where: { status: "RUNNING", batch: { kind: "RANKING" } }, data: { status: "PENDING", error: "Worker restarted before this ranking question finished; retrying." } });
+  await prisma.modelTestBatch.updateMany({ where: { kind: "RANKING", status: "RUNNING" }, data: { status: "PENDING" } });
+  await prisma.modelTestBatch.updateMany({ where: { kind: "RANKING", judgeStatus: "RUNNING" }, data: { judgeStatus: "PENDING", judgeError: "Worker restarted before judge finished; retrying." } });
 }
 
 async function main() {

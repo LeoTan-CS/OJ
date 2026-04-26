@@ -43,8 +43,10 @@ pnpm worker
 - 每个普通用户仅保留一个当前模型，目录名固定为当前用户名。
 - 同一用户重复上传模型会覆盖自己的当前模型，不影响其他用户；小组仅作为可选标记。
 - 上传文件必须为 `.zip`，压缩包内需要包含 `main.py`，或者单一根目录下的 `main.py`。
+- 平台通过 `python3 main.py "问题文本"` 启动模型，模型需要把非空回答打印到 `stdout`。
 - 平台测试题库默认来自 `data/model-benchmark/questions.json`。
 - 用户侧“快速测试”会用固定问题“简单介绍一下自己”直接验证模型是否可运行。
+- 详细提交格式、`main.py` 输入输出、评测流程和积分规则见 [`docs/model-submission-and-ranking.md`](docs/model-submission-and-ranking.md)。
 
 ## 排名说明
 

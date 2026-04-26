@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { LeaderboardBatch, LeaderboardBatchEntry, LeaderboardTotalEntry } from "@/lib/model-leaderboard";
-import { Card } from "./ui";
+import { Card, ModelIdentity } from "./ui";
 
 type BatchSortKey = "qualityAverage" | "timeAverage" | "memoryAverage" | "totalScore";
 type TotalSortKey = "modelName" | "totalScore" | `test:${string}`;
@@ -175,7 +175,7 @@ export function ModelLeaderboardView({ batches, totals }: { batches: Leaderboard
                 {sortedBatchEntries.map((entry, index) => (
                   <tr key={`${selectedBatch.batchId}-${entry.modelId}`} className={rowClassName(entry.isCurrentUser)}>
                     <td className="font-bold text-slate-900">#{index + 1}</td>
-                    <td><div className="font-semibold">{entry.modelName}</div><div className="text-xs text-slate-500">{entry.username}</div></td>
+                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} groupName={entry.groupName} /></td>
                     <td>{formatAverage(entry.qualityAverage)}</td>
                     <td>{formatAverage(entry.timeAverage)}</td>
                     <td>{formatAverage(entry.memoryAverage)}</td>
@@ -219,7 +219,7 @@ export function ModelLeaderboardView({ batches, totals }: { batches: Leaderboard
                 {sortedTotals.map((entry, index) => (
                   <tr key={entry.modelId} className={rowClassName(entry.isCurrentUser)}>
                     <td className="font-bold text-slate-900">#{index + 1}</td>
-                    <td><div className="font-semibold">{entry.modelName}</div><div className="text-xs text-slate-500">{entry.username}</div></td>
+                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} groupName={entry.groupName} /></td>
                     {totalBatches.map((batch) => {
                       const score = totalBatchScore(entry, batch.batchId);
                       return <td key={`${entry.modelId}-${batch.batchId}`}>{score == null ? "-" : formatAverage(score)}</td>;

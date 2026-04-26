@@ -1,12 +1,32 @@
 {
   "questions": [
     {
-      "id": "gradient-descent",
-      "question": "什么是梯度下降"
+      "id": "layer-correctness",
+      "question": "在实现深度卷积神经网络基本单元时，如何确保一个网络层的实现是正确的？"
     },
     {
-      "id": "classification-vs-regression",
-      "question": "分类问题和回归问题有什么相同和不同点"
+      "id": "network-correctness-debugging",
+      "question": "在实现深度卷积神经网络后，如何保证整个网络的实现是正确的？如果是网络中的某个层计算有误，如何快速定位到有错误的层？"
+    },
+    {
+      "id": "layer-computation-and-latency",
+      "question": "如何计算深度神经网络中每层的计算量（乘法数量和加法数量）？如何计算整个网络的前向传播时间和网络中每层的前向传播时间？深度神经网络中每层的计算量和每层的前向传播时间之间有什么关系？"
+    },
+    {
+      "id": "improve-accuracy-without-architecture-change",
+      "question": "在实现神经网络后，如何在不改变网络结构的条件下提高精度？"
+    },
+    {
+      "id": "improve-accuracy-with-architecture-change",
+      "question": "如何通过修改网络结构提高精度？可以从哪些方面修改网络结构？"
+    },
+    {
+      "id": "style-transfer-loss-layers",
+      "question": "在非实时风格迁移中，如何选择用于计算内容损失和风格损失的层？不同的层对风格迁移的效果有什么影响？"
+    },
+    {
+      "id": "style-transfer-loss-weights",
+      "question": "在非实时风格迁移中，内容损失和风格损失的权重系数 α 和 β 如何选择？不同的权重系数对风格迁移的效果有什么影响？"
     }
   ]
 }

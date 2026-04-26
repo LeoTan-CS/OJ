@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/shell";
-import { Card, StatusBadge } from "@/components/ui";
+import { Card, ModelIdentity, StatusBadge } from "@/components/ui";
 import { getCurrentUser, getRoleHomePath } from "@/lib/auth";
 import { anonymizeModelLeaderboardData } from "@/lib/model-leaderboard";
 import { loadModelLeaderboardData } from "@/lib/model-leaderboard-server";
@@ -104,7 +104,6 @@ export default async function DashboardPage() {
                 <tr>
                   <th>排名</th>
                   <th>模型</th>
-                  <th>用户</th>
                   <th>最终得分</th>
                 </tr>
               </thead>
@@ -112,12 +111,11 @@ export default async function DashboardPage() {
                 {topRankings.map((entry, index) => (
                   <tr key={entry.modelId} className={entry.isCurrentUser ? "bg-emerald-50 font-semibold text-slate-950" : undefined}>
                     <td className="font-bold text-slate-900">#{index + 1}</td>
-                    <td className="font-semibold">{entry.modelName}</td>
-                    <td>{entry.username}</td>
+                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} groupName={entry.groupName} /></td>
                     <td>{formatScore(entry.totalScore)}</td>
                   </tr>
                 ))}
-                {!topRankings.length && <tr><td colSpan={4} className="text-sm text-slate-500">还没有完成的模型排名批次。</td></tr>}
+                {!topRankings.length && <tr><td colSpan={3} className="text-sm text-slate-500">还没有完成的模型排名批次。</td></tr>}
               </tbody>
             </table>
           </Card>
