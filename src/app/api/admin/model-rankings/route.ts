@@ -20,8 +20,8 @@ export async function GET() {
     const uploadIds = await getSyncedModelUploadIds();
     const questions = await readDefaultModelRankingQuestions();
     const [models, batches] = await Promise.all([
-      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: { select: publicUserSelect }, group: true }, orderBy: { createdAt: "desc" } }),
-      prisma.modelTestBatch.findMany({ where: { kind: "RANKING" }, include: { createdBy: { select: publicUserSelect }, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: { select: publicUserSelect }, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 10 }),
+      prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: { select: publicUserSelect } }, orderBy: { createdAt: "desc" } }),
+      prisma.modelTestBatch.findMany({ where: { kind: "RANKING" }, include: { createdBy: { select: publicUserSelect }, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: { select: publicUserSelect } } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 10 }),
     ]);
     return json({ questionSummary: summarizeRankingQuestions(questions), questionCount: questions.length, models, batches });
   });

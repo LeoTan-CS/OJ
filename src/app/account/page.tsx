@@ -21,7 +21,7 @@ export default async function AccountPage() {
             <div>
               <p className="text-sm font-semibold text-slate-500">个人中心</p>
               <h1 className="mt-2 text-3xl font-bold text-slate-950">{user.username}</h1>
-              <p className="mt-2 text-sm text-slate-500">{roleLabel(user.role)}{user.groupName ? ` · ${user.groupName}` : ""}</p>
+              <p className="mt-2 text-sm text-slate-500">{roleLabel(user.role)}</p>
             </div>
             <div className="rounded-2xl bg-slate-50 px-5 py-4 text-sm text-slate-600">
               <div className="font-semibold text-slate-950">账号 ID</div>

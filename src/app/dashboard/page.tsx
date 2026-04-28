@@ -34,7 +34,7 @@ export default async function DashboardPage() {
     loadModelLeaderboardData(),
     prisma.modelArtifact.findFirst({
       where: { id: { in: uploadIds }, userId: user.id },
-      include: { group: true, results: { include: { batch: true }, orderBy: { createdAt: "desc" }, take: 1 } },
+      include: { results: { include: { batch: true }, orderBy: { createdAt: "desc" }, take: 1 } },
       orderBy: { createdAt: "desc" },
     }),
   ]);
@@ -85,7 +85,7 @@ export default async function DashboardPage() {
                 <div className="text-sm font-semibold text-slate-500">榜单位置</div>
                 <div className="mt-2 text-lg font-bold text-slate-950">{myRanking ? `#${myRankingIndex + 1}` : "未上榜"}</div>
                 <div className="mt-3 text-sm text-slate-500">
-                  {myRanking ? `累计总分 ${formatScore(myRanking.totalScore)}` : "完成模型排名后会出现在总榜中。"}
+                  {myRanking ? `最终得分 ${formatScore(myRanking.totalScore)}` : "完成模型排名后会出现在总榜中。"}
                 </div>
               </div>
             </div>
@@ -111,7 +111,7 @@ export default async function DashboardPage() {
                 {topRankings.map((entry, index) => (
                   <tr key={entry.modelId} className={entry.isCurrentUser ? "bg-emerald-50 font-semibold text-slate-950" : undefined}>
                     <td className="font-bold text-slate-900">#{index + 1}</td>
-                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} groupName={entry.groupName} /></td>
+                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} /></td>
                     <td>{formatScore(entry.totalScore)}</td>
                   </tr>
                 ))}

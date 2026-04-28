@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { DeleteButton } from "./admin-forms";
 
 type Role = "SUPER_ADMIN" | "ADMIN" | "USER";
@@ -10,14 +10,7 @@ export type AdminUserTableUser = {
   id: string;
   username: string;
   role: Role;
-  groupId: string | null;
-  groupName: string | null;
   createdAtLabel: string;
-};
-
-export type AdminUserTableGroup = {
-  label: string;
-  value: string;
 };
 
 type RowState = AdminUserTableUser & {
@@ -49,36 +42,27 @@ function parseRole(value: string): Role {
 
 export function AdminUserTable({
   actorRole,
-  groups,
   users,
 }: {
   actorRole: "SUPER_ADMIN" | "ADMIN";
-  groups: AdminUserTableGroup[];
   users: AdminUserTableUser[];
 }) {
   const router = useRouter();
   const [rows, setRows] = useState<RowState[]>(() => users.map(toRowState));
-  const groupNameById = useMemo(() => new Map(groups.map((group) => [group.value, group.label])), [groups]);
   const roleOptions: Role[] = actorRole === "SUPER_ADMIN" ? ["USER", "ADMIN", "SUPER_ADMIN"] : ["USER"];
-
-  function groupNameFor(role: Role, groupId: string | null) {
-    if (role !== "USER" || !groupId) return null;
-    return groupNameById.get(groupId) ?? null;
-  }
 
   function updateRow(id: string, update: (row: RowState) => RowState) {
     setRows((current) => current.map((row) => row.id === id ? update(row) : row));
   }
 
-  async function saveRow(id: string, changes: Partial<Pick<AdminUserTableUser, "groupId" | "role" | "username">>) {
+  async function saveRow(id: string, changes: Partial<Pick<AdminUserTableUser, "role" | "username">>) {
     const current = rows.find((row) => row.id === id);
     if (!current || current.pending || current.resetPending || !canManageRole(actorRole, current.role)) return;
 
     const nextRole = changes.role ?? current.role;
-    const nextGroupId = nextRole === "USER" ? changes.groupId ?? current.groupId : null;
     const nextUsername = changes.username ?? current.username;
 
-    if (nextUsername === current.username && nextRole === current.role && nextGroupId === current.groupId) {
+    if (nextUsername === current.username && nextRole === current.role) {
       updateRow(id, (row) => ({ ...row, draftUsername: row.username, error: "" }));
       return;
     }
@@ -89,8 +73,6 @@ export function AdminUserTable({
       username: nextUsername,
       draftUsername: nextUsername,
       role: nextRole,
-      groupId: nextGroupId,
-      groupName: groupNameFor(nextRole, nextGroupId),
       error: "",
       message: "",
       pending: true,
@@ -102,7 +84,6 @@ export function AdminUserTable({
       body: JSON.stringify({
         username: nextUsername,
         role: nextRole,
-        groupId: nextGroupId ?? "",
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -113,17 +94,14 @@ export function AdminUserTable({
       return;
     }
 
-    const user = data.user as Partial<AdminUserTableUser> & { group?: { name?: string | null } | null };
+    const user = data.user as Partial<AdminUserTableUser>;
     const savedRole = parseRole(String(user.role ?? nextRole));
-    const savedGroupId = typeof user.groupId === "string" ? user.groupId : null;
     const savedUsername = String(user.username ?? nextUsername);
     updateRow(id, (row) => ({
       ...row,
       username: savedUsername,
       draftUsername: savedUsername,
       role: savedRole,
-      groupId: savedGroupId,
-      groupName: user.group?.name ?? groupNameFor(savedRole, savedGroupId),
       error: "",
       message: "",
       pending: false,
@@ -134,7 +112,7 @@ export function AdminUserTable({
   async function resetPassword(id: string) {
     const current = rows.find((row) => row.id === id);
     if (!current || current.pending || current.resetPending || !canManageRole(actorRole, current.role)) return;
-    if (!confirm(`确定将 ${current.username} 的密码重置为用户名？`)) return;
+    if (!confirm(`确定将 ${current.username} 的密码重置为账号？`)) return;
 
     updateRow(id, (row) => ({ ...row, error: "", message: "", resetPending: true }));
     const response = await fetch(`/api/admin/users/${id}/reset-password`, { method: "POST" });
@@ -149,7 +127,7 @@ export function AdminUserTable({
       return;
     }
 
-    updateRow(id, (row) => ({ ...row, message: "密码已重置为用户名", resetPending: false }));
+    updateRow(id, (row) => ({ ...row, message: "密码已重置为账号", resetPending: false }));
   }
 
   function commitUsername(id: string) {
@@ -175,12 +153,11 @@ export function AdminUserTable({
 
   return (
     <div className="mt-4 overflow-x-auto">
-      <table className="min-w-[760px]">
+      <table className="min-w-[640px]">
         <thead>
           <tr>
-            <th>用户名</th>
+            <th>账号</th>
             <th>角色</th>
-            <th>组别标记</th>
             <th>创建时间</th>
             <th></th>
           </tr>
@@ -190,7 +167,6 @@ export function AdminUserTable({
             const manageable = canManageRole(actorRole, row.role);
             const controlsDisabled = !manageable || row.pending || row.resetPending;
             const resetDisabled = controlsDisabled || row.draftUsername.trim() !== row.username;
-            const groupDisabled = controlsDisabled || row.role !== "USER";
             const rowRoleOptions = roleOptions.includes(row.role) ? roleOptions : [row.role, ...roleOptions];
             return (
               <tr key={row.id}>
@@ -211,15 +187,6 @@ export function AdminUserTable({
                     onChange={(event) => void saveRow(row.id, { role: parseRole(event.target.value) })}
                   >
                     {rowRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
-                  </select>
-                </td>
-                <td className="min-w-40">
-                  <select
-                    disabled={groupDisabled}
-                    value={row.groupId ?? ""}
-                    onChange={(event) => void saveRow(row.id, { groupId: event.target.value || null })}
-                  >
-                    {groups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}
                   </select>
                 </td>
                 <td>{row.createdAtLabel}</td>
@@ -249,7 +216,7 @@ export function AdminUserTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={5} className="text-sm text-slate-500">暂无用户。</td>
+              <td colSpan={4} className="text-sm text-slate-500">暂无用户。</td>
             </tr>
           )}
         </tbody>

@@ -167,7 +167,7 @@ export function ModelLeaderboardView({ batches, totals }: { batches: Leaderboard
                   <th>模型</th>
                   <SortHeader activeSortKey={batchSortKey} direction={batchSortDirection} label="质量均分" onSort={handleBatchSort} sortKey="qualityAverage" />
                   <SortHeader activeSortKey={batchSortKey} direction={batchSortDirection} label="时间均分" onSort={handleBatchSort} sortKey="timeAverage" />
-                  <SortHeader activeSortKey={batchSortKey} direction={batchSortDirection} label="内存均分" onSort={handleBatchSort} sortKey="memoryAverage" />
+                  <SortHeader activeSortKey={batchSortKey} direction={batchSortDirection} label="空间均分" onSort={handleBatchSort} sortKey="memoryAverage" />
                   <SortHeader activeSortKey={batchSortKey} direction={batchSortDirection} label="本次得分" onSort={handleBatchSort} sortKey="totalScore" />
                 </tr>
               </thead>
@@ -175,7 +175,7 @@ export function ModelLeaderboardView({ batches, totals }: { batches: Leaderboard
                 {sortedBatchEntries.map((entry, index) => (
                   <tr key={`${selectedBatch.batchId}-${entry.modelId}`} className={rowClassName(entry.isCurrentUser)}>
                     <td className="font-bold text-slate-900">#{index + 1}</td>
-                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} groupName={entry.groupName} /></td>
+                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} /></td>
                     <td>{formatAverage(entry.qualityAverage)}</td>
                     <td>{formatAverage(entry.timeAverage)}</td>
                     <td>{formatAverage(entry.memoryAverage)}</td>
@@ -219,7 +219,7 @@ export function ModelLeaderboardView({ batches, totals }: { batches: Leaderboard
                 {sortedTotals.map((entry, index) => (
                   <tr key={entry.modelId} className={rowClassName(entry.isCurrentUser)}>
                     <td className="font-bold text-slate-900">#{index + 1}</td>
-                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} groupName={entry.groupName} /></td>
+                    <td><ModelIdentity modelName={entry.modelName} username={entry.username} /></td>
                     {totalBatches.map((batch) => {
                       const score = totalBatchScore(entry, batch.batchId);
                       return <td key={`${entry.modelId}-${batch.batchId}`}>{score == null ? "-" : formatAverage(score)}</td>;

@@ -40,14 +40,12 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     const { payload } = await jwtVerify(token, secret);
     const userId = typeof payload.userId === "string" ? payload.userId : null;
     if (!userId) return null;
-    const user = await prisma.user.findUnique({ where: { id: userId }, include: { group: true } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return null;
     return {
       id: user.id,
       username: user.username,
       role: toRole(user.role),
-      groupId: user.groupId,
-      groupName: user.group?.name ?? null,
     };
   } catch {
     return null;

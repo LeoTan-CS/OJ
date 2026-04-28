@@ -36,7 +36,6 @@ type ParsedRankingModelResult = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   status: string;
   error: string | null;
   outputPath: string | null;
@@ -68,7 +67,7 @@ async function refreshLatestRankingModelArchives(batch: LoadedRankingBatch) {
 async function loadRankingBatch(batchId: string) {
   return prisma.modelTestBatch.findUnique({
     where: { id: batchId },
-    include: { results: { include: { model: { include: { user: true, group: true } } }, orderBy: { createdAt: "asc" } } },
+    include: { results: { include: { model: { include: { user: true } } }, orderBy: { createdAt: "asc" } } },
   });
 }
 
@@ -238,7 +237,6 @@ async function buildRankingExecutionState(batch: LoadedRankingBatch) {
       modelId: result.modelId,
       modelName: result.model.name,
       username: modelOwnerName(result.model),
-      groupName: result.model.group?.name ?? null,
       status: result.status,
       error: result.error,
       outputPath: result.outputPath ?? defaultOutputPath,

@@ -23,5 +23,5 @@ export default function LoginForm() {
       setPending(false);
     }
   }
-  return <form action={submit} className="mt-6 grid gap-4"><Field label="用户名"><input name="username" required /></Field><Field label="密码"><input name="password" type="password" required /></Field>{error && <p className="text-sm text-red-600">{error}</p>}<Button disabled={pending}>{pending ? "登录中..." : "登录"}</Button></form>;
+  return <form action={submit} className="mt-6 grid gap-4"><Field label="账号"><input name="username" required /></Field><Field label="密码"><input name="password" type="password" required /></Field>{error && <p className="text-sm text-red-600">{error}</p>}<Button disabled={pending}>{pending ? "登录中..." : "登录"}</Button></form>;
 }

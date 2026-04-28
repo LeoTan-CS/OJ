@@ -9,7 +9,7 @@ export async function loadModelLeaderboardData() {
       results: {
         include: {
           model: {
-            include: { user: { select: publicUserSelect }, group: true },
+            include: { user: { select: publicUserSelect } },
           },
         },
         orderBy: { createdAt: "asc" },

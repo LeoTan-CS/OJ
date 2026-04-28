@@ -11,24 +11,12 @@ model User {
   id           String           @id @default(cuid())
   username     String           @unique
   passwordHash String
-  nickname     String
   role         String           @default("USER")
-  groupId      String?
   enabled      Boolean          @default(true)
   createdAt    DateTime         @default(now())
-  group        Group?           @relation(fields: [groupId], references: [id], onDelete: SetNull)
   models       ModelArtifact[]
   uploadRecords ModelUploadRecord[]
   testBatches  ModelTestBatch[] @relation("ModelTestBatchCreator")
-}
-
-model Group {
-  id            String              @id @default(cuid())
-  name          String              @unique
-  createdAt     DateTime            @default(now())
-  users         User[]
-  models        ModelArtifact[]
-  uploadRecords ModelUploadRecord[]
 }
 
 model Announcement {
@@ -42,7 +30,6 @@ model Announcement {
 model ModelArtifact {
   id               String            @id @default(cuid())
   userId           String            @unique
-  groupId          String?
   name             String
   originalFilename String
   archivePath      String
@@ -51,17 +38,13 @@ model ModelArtifact {
   enabled          Boolean           @default(true)
   createdAt        DateTime          @default(now())
   user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group            Group?            @relation(fields: [groupId], references: [id], onDelete: SetNull)
   uploadRecords    ModelUploadRecord[]
   results          ModelTestResult[]
-
-  @@index([groupId])
 }
 
 model ModelUploadRecord {
   id               String        @id @default(cuid())
   modelId          String
-  groupId          String?
   userId           String
   originalFilename String
   archivePath      String
@@ -69,10 +52,8 @@ model ModelUploadRecord {
   entrypointPath   String
   uploadedAt       DateTime      @default(now())
   model            ModelArtifact @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  group            Group?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([groupId, uploadedAt])
   @@index([userId, uploadedAt])
   @@index([modelId, uploadedAt])
 }

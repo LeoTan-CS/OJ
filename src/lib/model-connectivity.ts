@@ -1,10 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { modelTimeoutMessage, readModelQuestionResults, runModelQuestionsIndividually, type ModelRunStatus } from "@/lib/model-runner";
+import { modelRuntimeLimitMs } from "@/lib/model-upload";
+import { formatModelTimeoutMessage, readModelQuestionResults, runModelQuestionsIndividually, type ModelRunStatus } from "@/lib/model-runner";
 
 export const modelConnectivityPrompt = "介绍一下你自己";
-export const modelConnectivityTimeoutMs = 60_000;
+export const modelConnectivityTimeoutMs = modelRuntimeLimitMs;
 
 const outputLimit = 4000;
 
@@ -16,9 +17,9 @@ export type ModelConnectivityResult = {
   peakMemoryKb: number | null;
 };
 
-function errorMessage(status: ModelRunStatus, fallback?: string | null) {
+function errorMessage(status: ModelRunStatus, timeoutMs: number, fallback?: string | null) {
   if (fallback?.trim()) return fallback.trim().slice(0, outputLimit);
-  return status === "TIME_LIMIT_EXCEEDED" ? modelTimeoutMessage : status;
+  return status === "TIME_LIMIT_EXCEEDED" ? formatModelTimeoutMessage(timeoutMs) : status;
 }
 
 export async function runModelConnectivityTest({
@@ -51,7 +52,7 @@ export async function runModelConnectivityTest({
       return {
         status,
         answer: questionResult?.answer ?? null,
-        error: errorMessage(status, questionResult?.error ?? result.error ?? result.stderr ?? "测试未返回有效回答"),
+        error: errorMessage(status, timeoutMs, questionResult?.error ?? result.error ?? result.stderr ?? "测试未返回有效回答"),
         durationMs: questionResult?.durationMs ?? result.durationMs,
         peakMemoryKb: questionResult?.peakMemoryKb ?? result.peakMemoryKb ?? null,
       };

@@ -8,21 +8,18 @@ import { publicUserSelect } from "@/lib/user-select";
 
 async function requireModelOwner(user: SessionUser) {
   if (user.role !== "USER") throw new Response(JSON.stringify({ error: "只有普通用户可以上传模型" }), { status: 403 });
-  const group = user.groupId ? await prisma.group.findUnique({ where: { id: user.groupId } }) : null;
-  if (user.groupId && !group) throw new Response(JSON.stringify({ error: "当前账号的小组不存在，无法上传模型" }), { status: 400 });
   try {
     assertModelStorageId(user.username);
   } catch (storageError) {
     if (storageError instanceof Error) throw new Response(JSON.stringify({ error: storageError.message }), { status: 400 });
     throw storageError;
   }
-  return { group, storageId: user.username };
+  return { storageId: user.username };
 }
 
 function restoreModelData(previousModel: NonNullable<Awaited<ReturnType<typeof prisma.modelArtifact.findUnique>>>) {
   return {
     userId: previousModel.userId,
-    groupId: previousModel.groupId,
     name: previousModel.name,
     originalFilename: previousModel.originalFilename,
     archivePath: previousModel.archivePath,
@@ -34,14 +31,12 @@ function restoreModelData(previousModel: NonNullable<Awaited<ReturnType<typeof p
 }
 
 async function createUploadRecord({
-  groupId,
   modelId,
   originalFilename,
   paths,
   uploadedAt,
   userId,
 }: {
-  groupId: string | null;
   modelId: string;
   originalFilename: string;
   paths: { archivePath: string; workingDir: string; entrypointPath: string };
@@ -51,7 +46,6 @@ async function createUploadRecord({
   await prisma.modelUploadRecord.create({
     data: {
       modelId,
-      groupId,
       userId,
       originalFilename,
       archivePath: paths.archivePath,
@@ -82,7 +76,7 @@ export async function GET() {
     const uploadIds = await getSyncedModelUploadIds();
     const models = await prisma.modelArtifact.findMany({
       where: { id: { in: uploadIds }, ...(user.role === "USER" ? { userId: user.id } : {}) },
-      include: { user: { select: publicUserSelect }, group: true, results: { include: { batch: true }, orderBy: { createdAt: "desc" }, take: 1 } },
+      include: { user: { select: publicUserSelect }, results: { include: { batch: true }, orderBy: { createdAt: "desc" }, take: 1 } },
       orderBy: { createdAt: "desc" },
     });
     return json({ models });
@@ -92,7 +86,7 @@ export async function GET() {
 export async function POST(request: Request) {
   return handle(async () => {
     const user = await requireUser();
-    const { group, storageId } = await requireModelOwner(user);
+    const { storageId } = await requireModelOwner(user);
     const previousModel = await prisma.modelArtifact.findUnique({ where: { id: storageId } });
     const directFilename = decodeHeaderValue(request.headers.get("x-model-filename"));
 
@@ -106,8 +100,8 @@ export async function POST(request: Request) {
       const uploadedAt = new Date();
       const model = await prisma.modelArtifact.upsert({
         where: { id: storageId },
-        update: { userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
-        create: { id: storageId, userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
+        update: { userId: user.id, name: modelName, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
+        create: { id: storageId, userId: user.id, name: modelName, originalFilename: directFilename, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
       });
       try {
         const paths = await saveModelUploadStream(storageId, directFilename, request.body);
@@ -115,7 +109,7 @@ export async function POST(request: Request) {
           where: { id: model.id },
           data: { archivePath: paths.archivePath, packageDir: paths.workingDir, entrypointPath: paths.entrypointPath },
         });
-        await createUploadRecord({ groupId: group?.id ?? null, modelId: model.id, originalFilename: directFilename, paths, uploadedAt, userId: user.id });
+        await createUploadRecord({ modelId: model.id, originalFilename: directFilename, paths, uploadedAt, userId: user.id });
         return json({ model: updated });
       } catch (uploadError) {
         if (previousModel) await prisma.modelArtifact.update({ where: { id: model.id }, data: restoreModelData(previousModel) }).catch(() => undefined);
@@ -141,8 +135,8 @@ export async function POST(request: Request) {
     const uploadedAt = new Date();
     const model = await prisma.modelArtifact.upsert({
       where: { id: storageId },
-      update: { userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
-      create: { id: storageId, userId: user.id, groupId: group?.id ?? null, name: modelName, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
+      update: { userId: user.id, name: modelName, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", enabled: true, createdAt: uploadedAt },
+      create: { id: storageId, userId: user.id, name: modelName, originalFilename: file.name, archivePath: "pending", packageDir: "pending", entrypointPath: "pending", createdAt: uploadedAt },
     });
     try {
       const paths = await saveModelUpload(storageId, file);
@@ -150,7 +144,7 @@ export async function POST(request: Request) {
         where: { id: model.id },
         data: { archivePath: paths.archivePath, packageDir: paths.workingDir, entrypointPath: paths.entrypointPath },
       });
-      await createUploadRecord({ groupId: group?.id ?? null, modelId: model.id, originalFilename: file.name, paths, uploadedAt, userId: user.id });
+      await createUploadRecord({ modelId: model.id, originalFilename: file.name, paths, uploadedAt, userId: user.id });
       return json({ model: updated });
     } catch (uploadError) {
       if (previousModel) await prisma.modelArtifact.update({ where: { id: model.id }, data: restoreModelData(previousModel) }).catch(() => undefined);

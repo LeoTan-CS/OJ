@@ -28,7 +28,6 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
   const [users, existingModels] = await Promise.all([
     prisma.user.findMany({
       where: { username: { in: uploadIds }, role: "USER" },
-      include: { group: true },
     }),
     prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, select: { id: true, userId: true } }),
   ]);
@@ -52,7 +51,6 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
         where: { id: uploadId },
         update: {
           userId: user.id,
-          groupId: user.groupId,
           archivePath: metadata.archivePath,
           packageDir: metadata.packageDir,
           entrypointPath: metadata.entrypointPath,
@@ -60,7 +58,6 @@ export async function syncModelArtifactsWithUploads(): Promise<ModelUploadSyncRe
         create: {
           id: uploadId,
           userId: user.id,
-          groupId: user.groupId,
           name: uploadId,
           originalFilename: metadata.originalFilename,
           archivePath: metadata.archivePath,

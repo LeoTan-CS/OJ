@@ -2,8 +2,18 @@ import { readFile } from "node:fs/promises";
 import { modelRankingPaths, type JudgeQuestionReport, type JudgeRanking } from "@/lib/model-ranking";
 import type { ModelQuestion, ModelQuestionResult } from "@/lib/model-runner";
 
-const qualityRankPoints = [10, 7, 6, 5, 4, 3, 2, 1] as const;
-const efficiencyRankPoints = [5, 4, 3, 2, 1] as const;
+const rankScoreBands = [
+  { maxRank: 3, score: 100 },
+  { maxRank: 5, score: 97 },
+  { maxRank: 10, score: 95 },
+  { maxRank: 20, score: 90 },
+  { maxRank: 30, score: 85 },
+  { maxRank: 40, score: 80 },
+  { maxRank: 50, score: 75 },
+  { maxRank: 60, score: 70 },
+  { maxRank: 70, score: 65 },
+  { maxRank: Number.POSITIVE_INFINITY, score: 60 },
+] as const;
 const qualityWeight = 0.8;
 const timeWeight = 0.1;
 const memoryWeight = 0.1;
@@ -17,9 +27,6 @@ type RankingResultSource = {
   model: {
     id: string;
     name: string;
-    group: {
-      name: string;
-    } | null;
     user: {
       username: string;
     };
@@ -40,7 +47,6 @@ export type LeaderboardQuestionEntry = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   status: string;
   durationMs: number | null;
   peakMemoryKb: number | null;
@@ -57,7 +63,6 @@ export type LeaderboardBatchEntry = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   isCurrentUser?: boolean;
   status: string;
   questionCount: number;
@@ -134,7 +139,6 @@ export type LeaderboardTotalEntry = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   isCurrentUser?: boolean;
   appearances: number;
   qualityTotal: number;
@@ -153,14 +157,12 @@ type AnonymousModelIdentity = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
 };
 
 type LeaderboardIdentityFields = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   isCurrentUser?: boolean;
 };
 
@@ -177,18 +179,23 @@ export type RankingBatchLeaderboardInput = {
     modelId: string;
     modelName: string;
     username: string;
-    groupName: string | null;
     status: string;
     questionResults: ModelQuestionResult[];
   }>;
 };
 
-function pointsForRank(rank: number | null | undefined, rankPoints: readonly number[]) {
-  return rank && rank >= 1 && rank <= rankPoints.length ? rankPoints[rank - 1] : 0;
+function pointsForRank(rank: number | null | undefined) {
+  const numericRank = Number(rank);
+  if (!Number.isFinite(numericRank) || numericRank < 1) return 0;
+  return rankScoreBands.find((band) => numericRank <= band.maxRank)?.score ?? 0;
 }
 
 function weightedTotalScore(qualityScore: number, timeScore: number, memoryScore: number) {
   return qualityScore * qualityWeight + timeScore * timeWeight + memoryScore * memoryWeight;
+}
+
+function averageScores(values: number[], denominator: number) {
+  return values.reduce((sum, value) => sum + value, 0) / Math.max(denominator, 1);
 }
 
 function toIsoString(value: Date | null) {
@@ -265,6 +272,62 @@ function buildAggregateQualityRankings(entries: LeaderboardBatchEntry[]) {
     }));
 }
 
+function normalizeQuestionSnapshot(question: LeaderboardQuestionSnapshot): LeaderboardQuestionSnapshot {
+  const qualityRanks = new Map(question.rankings.map((ranking) => [ranking.modelId, ranking.rank] as const));
+  const timeRanks = buildMetricRankMap(
+    question.entries
+      .filter((entry) => entry.status === "SCORED" && entry.durationMs != null)
+      .map((entry) => ({ modelId: entry.modelId, value: entry.durationMs! })),
+  );
+  const memoryRanks = buildMetricRankMap(
+    question.entries
+      .filter((entry) => entry.status === "SCORED" && entry.peakMemoryKb != null)
+      .map((entry) => ({ modelId: entry.modelId, value: entry.peakMemoryKb! })),
+  );
+
+  return {
+    ...question,
+    entries: sortQuestionEntries(question.entries.map((entry) => {
+      const qualityRank = qualityRanks.get(entry.modelId) ?? entry.qualityRank ?? null;
+      const timeRank = timeRanks.get(entry.modelId) ?? null;
+      const memoryRank = memoryRanks.get(entry.modelId) ?? null;
+      const qualityScore = pointsForRank(qualityRank);
+      const timeScore = pointsForRank(timeRank);
+      const memoryScore = pointsForRank(memoryRank);
+      return {
+        ...entry,
+        qualityRank,
+        qualityScore,
+        timeRank,
+        timeScore,
+        memoryRank,
+        memoryScore,
+        totalScore: weightedTotalScore(qualityScore, timeScore, memoryScore),
+      };
+    })),
+  };
+}
+
+function recalculateBatchEntriesFromQuestions(
+  entries: LeaderboardBatchEntry[],
+  questions: LeaderboardQuestionSnapshot[],
+  questionCount: number,
+) {
+  return sortBatchEntries(entries.map((entry) => {
+    const questionEntries = questions
+      .map((question) => question.entries.find((questionEntry) => questionEntry.modelId === entry.modelId))
+      .filter((questionEntry): questionEntry is LeaderboardQuestionEntry => Boolean(questionEntry));
+    return {
+      ...entry,
+      questionCount,
+      qualityAverage: averageScores(questionEntries.map((questionEntry) => questionEntry.qualityScore), questionCount),
+      timeAverage: averageScores(questionEntries.map((questionEntry) => questionEntry.timeScore), questionCount),
+      memoryAverage: averageScores(questionEntries.map((questionEntry) => questionEntry.memoryScore), questionCount),
+      totalScore: averageScores(questionEntries.map((questionEntry) => questionEntry.totalScore), questionCount),
+    };
+  }));
+}
+
 export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): LeaderboardSnapshot {
   const reportByQuestionId = new Map(input.questionReports.map((report) => [report.questionId, report] as const));
 
@@ -297,14 +360,13 @@ export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): L
       const qualityRank = qualityRanks.get(result.modelId) ?? null;
       const timeRank = timeRanks.get(result.modelId) ?? null;
       const memoryRank = memoryRanks.get(result.modelId) ?? null;
-      const qualityScore = pointsForRank(qualityRank, qualityRankPoints);
-      const timeScore = pointsForRank(timeRank, efficiencyRankPoints);
-      const memoryScore = pointsForRank(memoryRank, efficiencyRankPoints);
+      const qualityScore = pointsForRank(qualityRank);
+      const timeScore = pointsForRank(timeRank);
+      const memoryScore = pointsForRank(memoryRank);
       return {
         modelId: result.modelId,
         modelName: result.modelName,
         username: result.username,
-        groupName: result.groupName,
         status: questionResult?.status ?? result.status,
         durationMs: questionResult?.durationMs ?? null,
         peakMemoryKb: questionResult?.peakMemoryKb ?? null,
@@ -332,15 +394,14 @@ export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): L
     const averageDurationMs = meanOrNull(result.questionResults.filter((item) => item.status === "SCORED").map((item) => item.durationMs ?? null));
     const averagePeakMemoryKb = meanOrNull(result.questionResults.filter((item) => item.status === "SCORED").map((item) => item.peakMemoryKb ?? null));
     const questionCount = input.questions.length;
-    const qualityAverage = modelQuestionEntries.reduce((sum, item) => sum + item.qualityScore, 0) / Math.max(questionCount, 1);
-    const timeAverage = modelQuestionEntries.reduce((sum, item) => sum + item.timeScore, 0) / Math.max(questionCount, 1);
-    const memoryAverage = modelQuestionEntries.reduce((sum, item) => sum + item.memoryScore, 0) / Math.max(questionCount, 1);
+    const qualityAverage = averageScores(modelQuestionEntries.map((item) => item.qualityScore), questionCount);
+    const timeAverage = averageScores(modelQuestionEntries.map((item) => item.timeScore), questionCount);
+    const memoryAverage = averageScores(modelQuestionEntries.map((item) => item.memoryScore), questionCount);
     const status = successfulQuestionCount >= questionCount ? "SCORED" : successfulQuestionCount > 0 ? "PARTIAL" : result.status;
     return {
       modelId: result.modelId,
       modelName: result.modelName,
       username: result.username,
-      groupName: result.groupName,
       status,
       questionCount,
       successfulQuestions: successfulQuestionCount,
@@ -349,7 +410,7 @@ export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): L
       qualityAverage,
       timeAverage,
       memoryAverage,
-      totalScore: weightedTotalScore(qualityAverage, timeAverage, memoryAverage),
+      totalScore: averageScores(modelQuestionEntries.map((item) => item.totalScore), questionCount),
     };
   });
 
@@ -371,21 +432,14 @@ export function buildLeaderboardSnapshot(input: RankingBatchLeaderboardInput): L
 }
 
 function normalizeLeaderboardSnapshot(snapshot: LeaderboardSnapshot): LeaderboardSnapshot {
+  const questions = snapshot.questions.map(normalizeQuestionSnapshot);
+  const questionCount = snapshot.batch.questionCount || questions.length;
+  const entries = recalculateBatchEntriesFromQuestions(snapshot.entries, questions, questionCount);
   return {
     ...snapshot,
-    questions: snapshot.questions.map((question) => ({
-      ...question,
-      entries: sortQuestionEntries(question.entries.map((entry) => ({
-        ...entry,
-        groupName: entry.groupName ?? null,
-        totalScore: weightedTotalScore(entry.qualityScore, entry.timeScore, entry.memoryScore),
-      }))),
-    })),
-    entries: sortBatchEntries(snapshot.entries.map((entry) => ({
-      ...entry,
-      groupName: entry.groupName ?? null,
-      totalScore: weightedTotalScore(entry.qualityAverage, entry.timeAverage, entry.memoryAverage),
-    }))),
+    qualityRankings: buildAggregateQualityRankings(entries),
+    questions,
+    entries,
   };
 }
 
@@ -435,7 +489,6 @@ function legacySnapshotToBatch(snapshot: LegacyLeaderboardSnapshot): Leaderboard
       modelId: entry.modelId,
       modelName: entry.modelName,
       username: entry.username,
-      groupName: null,
       status: entry.status,
       questionCount: 1,
       successfulQuestions: entry.status === "SCORED" ? 1 : 0,
@@ -489,14 +542,13 @@ function buildLegacyLeaderboardBatch(batch: RankingBatchSource): LeaderboardBatc
     completedAt: toIsoString(batch.completedAt),
     judgeCompletedAt: toIsoString(batch.judgeCompletedAt),
     entries: sortBatchEntries(batch.results.map((result) => {
-      const qualityAverage = pointsForRank(qualityByModel.get(result.modelId) ?? null, qualityRankPoints);
-      const timeAverage = pointsForRank(timeRanks.get(result.modelId) ?? null, efficiencyRankPoints);
-      const memoryAverage = pointsForRank(memoryRanks.get(result.modelId) ?? null, efficiencyRankPoints);
+      const qualityAverage = pointsForRank(qualityByModel.get(result.modelId) ?? null);
+      const timeAverage = pointsForRank(timeRanks.get(result.modelId) ?? null);
+      const memoryAverage = pointsForRank(memoryRanks.get(result.modelId) ?? null);
       return {
         modelId: result.modelId,
         modelName: result.model.name,
         username: result.model.user.username,
-        groupName: result.model.group?.name ?? null,
         status: result.status,
         questionCount: 1,
         successfulQuestions: result.status === "SCORED" ? 1 : 0,
@@ -512,24 +564,11 @@ function buildLegacyLeaderboardBatch(batch: RankingBatchSource): LeaderboardBatc
 }
 
 export async function buildModelLeaderboardData(batches: RankingBatchSource[]): Promise<ModelLeaderboardData> {
-  const identityByModelId = new Map<string, { groupName: string | null }>();
-  for (const batch of batches) {
-    for (const result of batch.results) {
-      if (!identityByModelId.has(result.modelId)) identityByModelId.set(result.modelId, { groupName: result.model.group?.name ?? null });
-    }
-  }
-
-  const batchEntries = (await Promise.all(batches.map(async (batch) => {
+  const batchEntries = await Promise.all(batches.map(async (batch) => {
     const snapshot = await readLeaderboardSnapshot(batch.id);
     if (snapshot && "version" in snapshot && snapshot.version === 2) return snapshotToBatch(snapshot);
     if (snapshot && "version" in snapshot && snapshot.version === 1) return legacySnapshotToBatch(snapshot);
     return buildLegacyLeaderboardBatch(batch);
-  }))).map((batch) => ({
-    ...batch,
-    entries: batch.entries.map((entry) => ({
-      ...entry,
-      groupName: entry.groupName ?? identityByModelId.get(entry.modelId)?.groupName ?? null,
-    })),
   }));
 
   const totals = new Map<string, LeaderboardTotalEntry>();
@@ -539,7 +578,6 @@ export async function buildModelLeaderboardData(batches: RankingBatchSource[]): 
         modelId: entry.modelId,
         modelName: entry.modelName,
         username: entry.username,
-        groupName: entry.groupName,
         appearances: 0,
         qualityTotal: 0,
         timeTotal: 0,
@@ -567,6 +605,10 @@ export async function buildModelLeaderboardData(batches: RankingBatchSource[]): 
     batches: batchEntries.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
     totals: sortTotalEntries([...totals.values()].map((entry) => ({
       ...entry,
+      qualityTotal: entry.qualityTotal / Math.max(entry.appearances, 1),
+      timeTotal: entry.timeTotal / Math.max(entry.appearances, 1),
+      memoryTotal: entry.memoryTotal / Math.max(entry.appearances, 1),
+      totalScore: entry.totalScore / Math.max(entry.appearances, 1),
       details: [...entry.details].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.totalScore - left.totalScore),
     }))),
   };
@@ -578,7 +620,6 @@ function createAnonymousIdentity(index: number): AnonymousModelIdentity {
     modelId: `anonymous-model-${label}`,
     modelName: "***",
     username: "***",
-    groupName: "***",
   };
 }
 
@@ -597,7 +638,6 @@ function anonymizeEntry<Entry extends LeaderboardIdentityFields>(
     modelId: identity.modelId,
     modelName: identity.modelName,
     username: identity.username,
-    groupName: identity.groupName,
     isCurrentUser: false,
   };
 }

@@ -150,7 +150,7 @@ export function UserImportForm() {
     setMessage(`已导入 ${data.created ?? 0} 个账号`);
     router.refresh();
   }
-  return <form onSubmit={submit} className="grid gap-4"><Field label="账号 Excel"><input name="usersFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></Field><p className="text-xs text-slate-500">从左到右四列依次为：用户名、初始密码、角色、小组。角色支持 SUPER_ADMIN / ADMIN / USER；小组为可选标记，填写时必须已存在。</p>{error && <p className="text-sm text-red-600">{error}</p>}{message && <p className="text-sm text-emerald-700">{message}</p>}<Button>{pending ? "导入中..." : "批量导入账号"}</Button></form>;
+  return <form onSubmit={submit} className="grid gap-4"><Field label="账号 Excel"><input name="usersFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></Field><p className="text-xs text-slate-500">从左到右三列依次为：账号、初始密码、角色。角色支持 SUPER_ADMIN / ADMIN / USER。</p>{error && <p className="text-sm text-red-600">{error}</p>}{message && <p className="text-sm text-emerald-700">{message}</p>}<Button>{pending ? "导入中..." : "批量导入账号"}</Button></form>;
 }
 
 export function ModelTestBatchButton() {

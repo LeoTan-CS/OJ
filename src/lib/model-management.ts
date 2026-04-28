@@ -39,26 +39,20 @@ export async function renameUserModelIdentity({
   db = prisma,
   userId,
   newUsername,
-  groupId,
 }: {
   db?: Db;
   userId: string;
   newUsername: string;
-  groupId?: string | null;
 }) {
   const model = await db.modelArtifact.findUnique({ where: { userId } });
   if (!model) return null;
   const oldId = model.id;
   const newId = newUsername;
   const mappings = pathMapping(oldId, newId);
-  if (!mappings.length) {
-    const updated = await db.modelArtifact.update({ where: { id: oldId }, data: { groupId: groupId ?? null } });
-    await db.modelUploadRecord.updateMany({ where: { modelId: oldId }, data: { groupId: groupId ?? null } });
-    return updated;
-  }
+  if (!mappings.length) return model;
 
   const conflict = await db.modelArtifact.findUnique({ where: { id: newId }, select: { userId: true } });
-  if (conflict && conflict.userId !== userId) throw new Error("目标用户名已存在模型，无法重命名模型目录");
+  if (conflict && conflict.userId !== userId) throw new Error("目标账号已存在模型，无法重命名模型目录");
 
   const renamed = await renameModelUpload(oldId, newId);
   let databaseChanged = false;
@@ -68,7 +62,6 @@ export async function renameUserModelIdentity({
         where: { id: oldId },
         data: {
           id: newId,
-          groupId: groupId ?? null,
           archivePath: replaceModelIdentityText(model.archivePath, mappings),
           packageDir: replaceModelIdentityText(model.packageDir, mappings),
           entrypointPath: replaceModelIdentityText(model.entrypointPath, mappings),
@@ -77,7 +70,6 @@ export async function renameUserModelIdentity({
       await tx.modelUploadRecord.updateMany({
         where: { modelId: newId },
         data: {
-          groupId: groupId ?? null,
           archivePath: replaceModelIdentityText(model.archivePath, mappings),
           packageDir: replaceModelIdentityText(model.packageDir, mappings),
           entrypointPath: replaceModelIdentityText(model.entrypointPath, mappings),
@@ -106,7 +98,6 @@ export async function renameUserModelIdentity({
           data: {
             id: oldId,
             name: model.name,
-            groupId: model.groupId,
             archivePath: model.archivePath,
             packageDir: model.packageDir,
             entrypointPath: model.entrypointPath,
@@ -115,7 +106,6 @@ export async function renameUserModelIdentity({
         await tx.modelUploadRecord.updateMany({
           where: { modelId: oldId },
           data: {
-            groupId: model.groupId,
             archivePath: model.archivePath,
             packageDir: model.packageDir,
             entrypointPath: model.entrypointPath,

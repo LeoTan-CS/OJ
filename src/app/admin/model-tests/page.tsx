@@ -14,7 +14,7 @@ export default async function AdminModelTestsPage() {
   const uploadIds = await getSyncedModelUploadIds();
   const models = await prisma.modelArtifact.findMany({
     where: { id: { in: uploadIds } },
-    include: { user: true, group: true },
+    include: { user: true },
     orderBy: { createdAt: "desc" },
   });
   const enabledCount = models.filter((model) => model.enabled).length;
@@ -32,7 +32,6 @@ export default async function AdminModelTestsPage() {
               modelId: model.id,
               modelName: model.name,
               username: model.user.username,
-              groupName: model.group?.name ?? null,
               enabled: model.enabled,
             }))}
           />
@@ -51,7 +50,7 @@ export default async function AdminModelTestsPage() {
               {models.map((model) => (
                 <tr key={model.id}>
                   <td>
-                    <ModelIdentity modelName={model.name} username={model.user.username} groupName={model.group?.name ?? null} />
+                    <ModelIdentity modelName={model.name} username={model.user.username} />
                     <div className="mt-1 break-all text-xs text-slate-400">文件 {model.originalFilename}</div>
                   </td>
                   <td><ModelEnabledToggle modelId={model.id} enabled={model.enabled} /></td>

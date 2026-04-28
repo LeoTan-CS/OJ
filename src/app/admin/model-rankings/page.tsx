@@ -33,12 +33,11 @@ function LegacyReportBlock({ reportText }: { reportText: string | null }) {
   return <div className="mt-4 grid gap-4 text-sm text-slate-700"><div className="rounded-xl bg-slate-50 p-4 leading-7">{report.summaryReport || "裁判未返回整体报告。"}</div><div className="grid gap-4 md:grid-cols-3"><section><h4 className="font-bold text-slate-900">优势</h4><ul className="mt-2 list-disc space-y-1 pl-5">{(report.strengths ?? []).map((item, index) => <li key={index}>{item}</li>)}</ul></section><section><h4 className="font-bold text-slate-900">不足</h4><ul className="mt-2 list-disc space-y-1 pl-5">{(report.weaknesses ?? []).map((item, index) => <li key={index}>{item}</li>)}</ul></section><section><h4 className="font-bold text-slate-900">建议</h4><ul className="mt-2 list-disc space-y-1 pl-5">{(report.recommendations ?? []).map((item, index) => <li key={index}>{item}</li>)}</ul></section></div></div>;
 }
 
-type ModelIdentityLookup = Map<string, { groupName: string | null; modelName: string; username: string }>;
+type ModelIdentityLookup = Map<string, { modelName: string; username: string }>;
 
-function resolveModelIdentity(entry: { groupName?: string | null; modelId: string; modelName: string; username: string }, identities?: ModelIdentityLookup) {
+function resolveModelIdentity(entry: { modelId: string; modelName: string; username: string }, identities?: ModelIdentityLookup) {
   const current = identities?.get(entry.modelId);
   return {
-    groupName: entry.groupName ?? current?.groupName ?? null,
     modelName: entry.modelName || current?.modelName || entry.modelId,
     username: entry.username || current?.username || entry.modelId,
   };
@@ -98,7 +97,7 @@ function QuestionReportBlock({ identities, snapshot }: { identities?: ModelIdent
                       <th>质量分</th>
                       <th>耗时名次</th>
                       <th>时间分</th>
-                      <th>内存名次</th>
+                      <th>空间名次</th>
                       <th>空间分</th>
                       <th>原因</th>
                     </tr>
@@ -135,12 +134,12 @@ export default async function AdminModelRankingsPage() {
   const uploadIds = await getSyncedModelUploadIds();
   const [questions, models, batches] = await Promise.all([
     readDefaultModelRankingQuestions(),
-    prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: true, group: true }, orderBy: { createdAt: "desc" } }),
-    prisma.modelTestBatch.findMany({ where: { kind: "RANKING" }, include: { createdBy: true, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: true, group: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 10 }),
+    prisma.modelArtifact.findMany({ where: { id: { in: uploadIds } }, include: { user: true }, orderBy: { createdAt: "desc" } }),
+    prisma.modelTestBatch.findMany({ where: { kind: "RANKING" }, include: { createdBy: true, results: { where: { modelId: { in: uploadIds } }, include: { model: { include: { user: true } } }, orderBy: { createdAt: "asc" } } }, orderBy: { createdAt: "desc" }, take: 10 }),
   ]);
   const snapshots = await Promise.all(batches.map((batch) => readLeaderboardSnapshot(batch.id)));
   const snapshotMap = new Map(batches.map((batch, index) => [batch.id, snapshots[index] && "version" in snapshots[index]! && snapshots[index]!.version === 2 ? snapshots[index] as LeaderboardSnapshot : null] as const));
-  const identityByModelId: ModelIdentityLookup = new Map(models.map((model) => [model.id, { groupName: model.group?.name ?? null, modelName: model.name, username: model.user.username }]));
+  const identityByModelId: ModelIdentityLookup = new Map(models.map((model) => [model.id, { modelName: model.name, username: model.user.username }]));
   const enabledCount = models.filter((model) => model.enabled).length;
   const questionSummary = summarizeRankingQuestions(questions);
 
@@ -168,7 +167,7 @@ export default async function AdminModelRankingsPage() {
             <tbody>
               {models.map((model) => (
                 <tr key={model.id}>
-                  <td><ModelIdentity modelName={model.name} username={model.user.username} groupName={model.group?.name ?? null} /><div className="mt-1 break-all text-xs text-slate-400">文件 {model.originalFilename}</div></td>
+                  <td><ModelIdentity modelName={model.name} username={model.user.username} /><div className="mt-1 break-all text-xs text-slate-400">文件 {model.originalFilename}</div></td>
                   <td>{model.enabled ? <span className="text-sm font-medium text-emerald-700">启用</span> : <span className="text-sm font-medium text-slate-500">禁用</span>}</td>
                   <td>{formatDate(model.createdAt)}</td>
                 </tr>
@@ -210,7 +209,7 @@ export default async function AdminModelRankingsPage() {
                     <tbody>
                       {batch.results.map((result) => (
                         <tr key={result.id}>
-                          <td><ModelIdentity modelName={result.model.name} username={result.model.user.username} groupName={result.model.group?.name ?? null} /></td>
+                          <td><ModelIdentity modelName={result.model.name} username={result.model.user.username} /></td>
                           <td><StatusBadge status={result.status} /></td>
                           <td>{result.durationMs ? `${result.durationMs}ms` : "-"}</td>
                           <td className="max-w-md"><div className="truncate text-xs text-slate-500">{result.outputPath ?? result.error ?? "-"}</div>{result.outputPreview && <details className="mt-1 text-xs"><summary className="cursor-pointer text-slate-600">回答预览</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2">{result.outputPreview}</pre></details>}{result.error && <div className="mt-1 text-xs text-red-600">{result.error}</div>}</td>
@@ -229,7 +228,7 @@ export default async function AdminModelRankingsPage() {
                             return (
                               <tr key={`${batch.id}-${ranking.modelId}`}>
                                 <td className="w-16 text-lg font-black">#{ranking.rank}</td>
-                                <td><ModelIdentity modelName={ranking.modelName || identity?.modelName || ranking.modelId} username={identity?.username ?? ranking.modelId} groupName={identity?.groupName ?? null} /></td>
+                                <td><ModelIdentity modelName={ranking.modelName || identity?.modelName || ranking.modelId} username={identity?.username ?? ranking.modelId} /></td>
                                 <td>{ranking.score == null ? "-" : `${ranking.score} 分`}</td>
                                 <td className="text-sm text-slate-600">{ranking.reason}</td>
                               </tr>

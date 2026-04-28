@@ -38,13 +38,11 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export function ModelIdentity({
-  groupName,
   modelName,
   username,
 }: {
-  groupName?: string | null;
   modelName: string;
   username: string;
 }) {
-  return <div><div className="font-semibold text-slate-950">{modelName}</div><div className="text-xs font-medium text-slate-500">用户 {username} · 组别 {groupName ?? "未分组"}</div></div>;
+  return <div><div className="font-semibold text-slate-950">{modelName}</div><div className="text-xs font-medium text-slate-500">账号 {username}</div></div>;
 }

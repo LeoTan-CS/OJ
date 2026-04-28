@@ -14,7 +14,7 @@ export async function AppShell({ children, admin = false }: { children: React.Re
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div>
             <div className="text-lg font-bold text-slate-950">Bench AI 模型评测平台</div>
-            <div className="text-xs text-slate-500">{user.username} · {user.role}{user.groupName ? ` · ${user.groupName}` : ""}</div>
+            <div className="text-xs text-slate-500">{user.username} · {user.role}</div>
           </div>
           <nav className="flex items-center gap-1">
             <NavLink href={user.role === "USER" ? "/dashboard" : "/admin"}>仪表盘</NavLink>

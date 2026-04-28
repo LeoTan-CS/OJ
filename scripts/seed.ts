@@ -3,27 +3,16 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-async function ensureGroup(name: string) {
-  return prisma.group.upsert({
-    where: { name },
-    update: {},
-    create: { name },
-  });
-}
-
-async function ensureUser(username: string, password: string, role: "SUPER_ADMIN" | "USER", groupName?: string) {
-  const group = groupName ? await ensureGroup(groupName) : null;
+async function ensureUser(username: string, password: string, role: "SUPER_ADMIN" | "USER") {
   const passwordHash = await bcrypt.hash(password, 10);
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) {
     return prisma.user.update({
       where: { username },
       data: {
-        nickname: username,
         passwordHash,
         role,
         enabled: true,
-        groupId: role === "USER" ? group?.id ?? null : null,
       },
     });
   }
@@ -31,10 +20,8 @@ async function ensureUser(username: string, password: string, role: "SUPER_ADMIN
   return prisma.user.create({
     data: {
       username,
-      nickname: username,
       passwordHash,
       role,
-      groupId: role === "USER" ? group?.id ?? null : null,
       enabled: true,
     },
   });
@@ -43,14 +30,14 @@ async function ensureUser(username: string, password: string, role: "SUPER_ADMIN
 async function main() {
   const adminPassword = "superadmin123";
   const demoUsers = [
-    { username: "user1", password: "user1", groupName: "group1" },
-    { username: "user2", password: "user2", groupName: "group2" },
-    { username: "user3", password: "user3", groupName: "group3" },
+    { username: "user1", password: "user1" },
+    { username: "user2", password: "user2" },
+    { username: "user3", password: "user3" },
   ] as const;
 
   const [admin, ...users] = await Promise.all([
     ensureUser("superadmin", adminPassword, "SUPER_ADMIN"),
-    ...demoUsers.map((user) => ensureUser(user.username, user.password, "USER", user.groupName)),
+    ...demoUsers.map((user) => ensureUser(user.username, user.password, "USER")),
   ]);
 
   const announcementTitle = "欢迎使用 Bench AI 模型评测平台";

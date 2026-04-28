@@ -5,7 +5,6 @@ export type ImportedUserRow = {
   username: string;
   password: string;
   role: "SUPER_ADMIN" | "ADMIN" | "USER";
-  groupName: string | null;
 };
 
 type ZipEntry = { name: string; compression: number; compressedSize: number; uncompressedSize: number; dataOffset: number };
@@ -121,18 +120,18 @@ export function parseUsersXlsx(buffer: Uint8Array): ImportedUserRow[] {
 
   return rows.flatMap((rowMatch) => {
     const rowNumber = Number(rowMatch[1]);
-    const cells = ["", "", "", ""];
+    const cells = ["", "", ""];
     for (const cellMatch of rowMatch[2].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
       const ref = cellMatch[1].match(/\br="([^"]+)"/)?.[1] ?? "";
       const index = columnIndex(ref);
       if (index >= 0 && index < cells.length) cells[index] = readCellValue(cellMatch[0], sharedStrings).trim();
     }
     if (cells.every((cell) => !cell)) return [];
-    if (rowNumber === 1 && cells[0] === "用户名" && cells[1] === "初始密码" && cells[2] === "角色") return [];
+    if (rowNumber === 1 && (cells[0] === "账号" || cells[0] === "用户名") && cells[1] === "初始密码" && cells[2] === "角色") return [];
     const role = roleAliases.get(cells[2].toUpperCase()) ?? roleAliases.get(cells[2]);
-    if (!cells[0] || !cells[1] || !cells[2]) throw new Error(`第 ${rowNumber} 行缺少用户名、初始密码或角色`);
+    if (!cells[0] || !cells[1] || !cells[2]) throw new Error(`第 ${rowNumber} 行缺少账号、初始密码或角色`);
     if (cells[1].length < 4) throw new Error(`第 ${rowNumber} 行初始密码至少 4 位`);
     if (!role) throw new Error(`第 ${rowNumber} 行角色必须是 SUPER_ADMIN、ADMIN、USER 或对应中文名称`);
-    return [{ rowNumber, username: cells[0], password: cells[1], role, groupName: cells[3] || null }];
+    return [{ rowNumber, username: cells[0], password: cells[1], role }];
   });
 }

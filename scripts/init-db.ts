@@ -13,7 +13,6 @@ type CountRow = { count: number };
 type ModelBackfillRow = {
   id: string;
   userId: string;
-  groupId: string | null;
   originalFilename: string;
   archivePath: string;
   packageDir: string;
@@ -22,13 +21,13 @@ type ModelBackfillRow = {
 };
 
 const legacyGroupUserMappings = [
-  { groupName: "group1", username: "user1", password: "user1" },
-  { groupName: "group2", username: "user2", password: "user2" },
-  { groupName: "group3", username: "user3", password: "user3" },
+  { oldUsername: "group1", username: "user1", password: "user1" },
+  { oldUsername: "group2", username: "user2", password: "user2" },
+  { oldUsername: "group3", username: "user3", password: "user3" },
 ] as const;
 
 const legacyModelMappings: ModelIdentityMapping[] = legacyGroupUserMappings.map((mapping) => ({
-  oldId: mapping.groupName,
+  oldId: mapping.oldUsername,
   newId: mapping.username,
 }));
 
@@ -42,16 +41,32 @@ async function addColumnIfMissing(table: string, column: string, definition: str
   await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definition};`);
 }
 
-async function rebuildModelTables() {
+async function rebuildCoreTables() {
   await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF;`);
   try {
+    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "User_next";`);
     await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "ModelArtifact_next";`);
     await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "ModelUploadRecord_next";`);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "User_next" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "username" TEXT NOT NULL UNIQUE,
+        "passwordHash" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'USER',
+        "enabled" BOOLEAN NOT NULL DEFAULT true,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT OR REPLACE INTO "User_next" ("id", "username", "passwordHash", "role", "enabled", "createdAt")
+      SELECT "id", "username", "passwordHash", "role", "enabled", "createdAt" FROM "User";
+    `);
+
     await prisma.$executeRawUnsafe(`
       CREATE TABLE "ModelArtifact_next" (
         "id" TEXT NOT NULL PRIMARY KEY,
         "userId" TEXT NOT NULL,
-        "groupId" TEXT,
         "name" TEXT NOT NULL,
         "originalFilename" TEXT NOT NULL,
         "archivePath" TEXT NOT NULL,
@@ -59,22 +74,18 @@ async function rebuildModelTables() {
         "entrypointPath" TEXT NOT NULL,
         "enabled" BOOLEAN NOT NULL DEFAULT true,
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "ModelArtifact_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-        CONSTRAINT "ModelArtifact_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "Group" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+        CONSTRAINT "ModelArtifact_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
       );
     `);
     await prisma.$executeRawUnsafe(`
-      INSERT OR REPLACE INTO "ModelArtifact_next" ("id", "userId", "groupId", "name", "originalFilename", "archivePath", "packageDir", "entrypointPath", "enabled", "createdAt")
-      SELECT "id", "userId", "groupId", "name", "originalFilename", "archivePath", "packageDir", "entrypointPath", "enabled", "createdAt" FROM "ModelArtifact";
+      INSERT OR REPLACE INTO "ModelArtifact_next" ("id", "userId", "name", "originalFilename", "archivePath", "packageDir", "entrypointPath", "enabled", "createdAt")
+      SELECT "id", "userId", "name", "originalFilename", "archivePath", "packageDir", "entrypointPath", "enabled", "createdAt" FROM "ModelArtifact";
     `);
-    await prisma.$executeRawUnsafe(`DROP TABLE "ModelArtifact";`);
-    await prisma.$executeRawUnsafe(`ALTER TABLE "ModelArtifact_next" RENAME TO "ModelArtifact";`);
 
     await prisma.$executeRawUnsafe(`
       CREATE TABLE "ModelUploadRecord_next" (
         "id" TEXT NOT NULL PRIMARY KEY,
         "modelId" TEXT NOT NULL,
-        "groupId" TEXT,
         "userId" TEXT NOT NULL,
         "originalFilename" TEXT NOT NULL,
         "archivePath" TEXT NOT NULL,
@@ -82,15 +93,21 @@ async function rebuildModelTables() {
         "entrypointPath" TEXT NOT NULL,
         "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "ModelUploadRecord_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "ModelArtifact" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-        CONSTRAINT "ModelUploadRecord_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "Group" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
         CONSTRAINT "ModelUploadRecord_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
       );
     `);
     await prisma.$executeRawUnsafe(`
-      INSERT OR REPLACE INTO "ModelUploadRecord_next" ("id", "modelId", "groupId", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "uploadedAt")
-      SELECT "id", "modelId", "groupId", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "uploadedAt" FROM "ModelUploadRecord";
+      INSERT OR REPLACE INTO "ModelUploadRecord_next" ("id", "modelId", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "uploadedAt")
+      SELECT "id", "modelId", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "uploadedAt" FROM "ModelUploadRecord";
     `);
+
     await prisma.$executeRawUnsafe(`DROP TABLE "ModelUploadRecord";`);
+    await prisma.$executeRawUnsafe(`DROP TABLE "ModelArtifact";`);
+    await prisma.$executeRawUnsafe(`DROP TABLE "User";`);
+    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "Group";`);
+
+    await prisma.$executeRawUnsafe(`ALTER TABLE "User_next" RENAME TO "User";`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "ModelArtifact_next" RENAME TO "ModelArtifact";`);
     await prisma.$executeRawUnsafe(`ALTER TABLE "ModelUploadRecord_next" RENAME TO "ModelUploadRecord";`);
   } finally {
     await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = ON;`);
@@ -102,70 +119,54 @@ async function findId(table: string, column: string, value: string) {
   return rows[0]?.id ?? null;
 }
 
-async function ensureGroup(name: string) {
-  const existingId = await findId("Group", "name", name);
-  if (existingId) return existingId;
-  const id = randomUUID();
-  await prisma.$executeRawUnsafe(`INSERT INTO "Group" ("id", "name", "createdAt") VALUES (?, ?, CURRENT_TIMESTAMP);`, id, name);
-  return id;
-}
-
-async function ensureMappedUser(groupName: string, username: string, password: string) {
-  const groupId = await ensureGroup(groupName);
+async function ensureMappedUser(oldUsername: string, username: string, password: string) {
   const passwordHash = await bcrypt.hash(password, 10);
-  const legacyUserId = await findId("User", "username", groupName);
+  const legacyUserId = await findId("User", "username", oldUsername);
   const mappedUserId = await findId("User", "username", username);
 
   if (legacyUserId && (!mappedUserId || mappedUserId === legacyUserId)) {
     await prisma.$executeRawUnsafe(
-      `UPDATE "User" SET "username" = ?, "nickname" = ?, "passwordHash" = ?, "role" = 'USER', "groupId" = ?, "enabled" = true WHERE "id" = ?;`,
-      username,
+      `UPDATE "User" SET "username" = ?, "passwordHash" = ?, "role" = 'USER', "enabled" = true WHERE "id" = ?;`,
       username,
       passwordHash,
-      groupId,
       legacyUserId,
     );
-    return { userId: legacyUserId, groupId };
+    return legacyUserId;
   }
 
   if (mappedUserId) {
     await prisma.$executeRawUnsafe(
-      `UPDATE "User" SET "nickname" = ?, "passwordHash" = ?, "role" = 'USER', "groupId" = ?, "enabled" = true WHERE "id" = ?;`,
-      username,
+      `UPDATE "User" SET "passwordHash" = ?, "role" = 'USER', "enabled" = true WHERE "id" = ?;`,
       passwordHash,
-      groupId,
       mappedUserId,
     );
-    return { userId: mappedUserId, groupId };
+    return mappedUserId;
   }
 
   const userId = randomUUID();
   await prisma.$executeRawUnsafe(
-    `INSERT INTO "User" ("id", "username", "passwordHash", "nickname", "role", "groupId", "enabled", "createdAt") VALUES (?, ?, ?, ?, 'USER', ?, true, CURRENT_TIMESTAMP);`,
+    `INSERT INTO "User" ("id", "username", "passwordHash", "role", "enabled", "createdAt") VALUES (?, ?, ?, 'USER', true, CURRENT_TIMESTAMP);`,
     userId,
     username,
     passwordHash,
-    username,
-    groupId,
   );
-  return { userId, groupId };
+  return userId;
 }
 
 async function migrateLegacyGroupUsers() {
   for (const mapping of legacyGroupUserMappings) {
-    const { userId, groupId } = await ensureMappedUser(mapping.groupName, mapping.username, mapping.password);
-    await renameLegacyModelDirectory(mapping.groupName, mapping.username);
+    const userId = await ensureMappedUser(mapping.oldUsername, mapping.username, mapping.password);
+    await renameLegacyModelDirectory(mapping.oldUsername, mapping.username);
     await prisma.$executeRawUnsafe(
-      `UPDATE "ModelArtifact" SET "id" = ?, "userId" = ?, "groupId" = ?, "name" = ? WHERE "id" = ? AND NOT EXISTS (SELECT 1 FROM "ModelArtifact" WHERE "id" = ?);`,
+      `UPDATE "ModelArtifact" SET "id" = ?, "userId" = ?, "name" = ? WHERE "id" = ? AND NOT EXISTS (SELECT 1 FROM "ModelArtifact" WHERE "id" = ?);`,
       mapping.username,
       userId,
-      groupId,
       mapping.username,
-      mapping.groupName,
+      mapping.oldUsername,
       mapping.username,
     );
-    await prisma.$executeRawUnsafe(`UPDATE "ModelArtifact" SET "userId" = ?, "groupId" = ?, "name" = ? WHERE "id" = ?;`, userId, groupId, mapping.username, mapping.username);
-    await replaceLegacyModelReferences(mapping.groupName, mapping.username, userId, groupId);
+    await prisma.$executeRawUnsafe(`UPDATE "ModelArtifact" SET "userId" = ?, "name" = ? WHERE "id" = ?;`, userId, mapping.username, mapping.username);
+    await replaceLegacyModelReferences(mapping.oldUsername, mapping.username, userId);
   }
   await rewriteModelRankingFiles(legacyModelMappings);
 }
@@ -186,7 +187,7 @@ async function renameLegacyModelDirectory(oldId: string, newId: string) {
   }
 }
 
-async function replaceLegacyModelReferences(oldId: string, newId: string, userId: string, groupId: string) {
+async function replaceLegacyModelReferences(oldId: string, newId: string, userId: string) {
   await prisma.$executeRawUnsafe(
     `UPDATE "ModelArtifact" SET "archivePath" = replace("archivePath", ?, ?), "packageDir" = replace("packageDir", ?, ?), "entrypointPath" = replace("entrypointPath", ?, ?) WHERE "id" = ?;`,
     oldId,
@@ -198,10 +199,9 @@ async function replaceLegacyModelReferences(oldId: string, newId: string, userId
     newId,
   );
   await prisma.$executeRawUnsafe(
-    `UPDATE "ModelUploadRecord" SET "modelId" = ?, "userId" = ?, "groupId" = ?, "archivePath" = replace("archivePath", ?, ?), "packageDir" = replace("packageDir", ?, ?), "entrypointPath" = replace("entrypointPath", ?, ?) WHERE "modelId" = ? OR "modelId" = ?;`,
+    `UPDATE "ModelUploadRecord" SET "modelId" = ?, "userId" = ?, "archivePath" = replace("archivePath", ?, ?), "packageDir" = replace("packageDir", ?, ?), "entrypointPath" = replace("entrypointPath", ?, ?) WHERE "modelId" = ? OR "modelId" = ?;`,
     newId,
     userId,
-    groupId,
     oldId,
     newId,
     oldId,
@@ -232,7 +232,7 @@ async function replaceLegacyModelReferences(oldId: string, newId: string, userId
 
 async function backfillModelUploadRecords() {
   const models = await prisma.$queryRawUnsafe<ModelBackfillRow[]>(
-    `SELECT "id", "userId", "groupId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "createdAt" FROM "ModelArtifact";`,
+    `SELECT "id", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "createdAt" FROM "ModelArtifact";`,
   );
   for (const model of models) {
     const existing = await prisma.$queryRawUnsafe<CountRow[]>(
@@ -243,10 +243,9 @@ async function backfillModelUploadRecords() {
     );
     if ((existing[0]?.count ?? 0) > 0) continue;
     await prisma.$executeRawUnsafe(
-      `INSERT INTO "ModelUploadRecord" ("id", "modelId", "groupId", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "uploadedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      `INSERT INTO "ModelUploadRecord" ("id", "modelId", "userId", "originalFilename", "archivePath", "packageDir", "entrypointPath", "uploadedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
       randomUUID(),
       model.id,
-      model.groupId,
       model.userId,
       model.originalFilename,
       model.archivePath,
@@ -265,29 +264,32 @@ async function deleteLegacyModelTestBatches() {
 async function main() {
   await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = ON;`);
 
-  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Group" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL UNIQUE, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
-  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "User" ("id" TEXT NOT NULL PRIMARY KEY, "username" TEXT NOT NULL UNIQUE, "passwordHash" TEXT NOT NULL, "nickname" TEXT NOT NULL, "role" TEXT NOT NULL DEFAULT 'USER', "groupId" TEXT, "enabled" BOOLEAN NOT NULL DEFAULT true, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "User_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "Group" ("id") ON DELETE SET NULL ON UPDATE CASCADE);`);
+  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "User" ("id" TEXT NOT NULL PRIMARY KEY, "username" TEXT NOT NULL UNIQUE, "passwordHash" TEXT NOT NULL, "role" TEXT NOT NULL DEFAULT 'USER', "enabled" BOOLEAN NOT NULL DEFAULT true, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
   await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Announcement" ("id" TEXT NOT NULL PRIMARY KEY, "title" TEXT NOT NULL, "body" TEXT NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
-  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ModelArtifact" ("id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "groupId" TEXT, "name" TEXT NOT NULL, "originalFilename" TEXT NOT NULL, "archivePath" TEXT NOT NULL, "packageDir" TEXT NOT NULL, "entrypointPath" TEXT NOT NULL, "enabled" BOOLEAN NOT NULL DEFAULT true, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ModelArtifact_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ModelArtifact_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "Group" ("id") ON DELETE SET NULL ON UPDATE CASCADE);`);
-  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ModelUploadRecord" ("id" TEXT NOT NULL PRIMARY KEY, "modelId" TEXT NOT NULL, "groupId" TEXT, "userId" TEXT NOT NULL, "originalFilename" TEXT NOT NULL, "archivePath" TEXT NOT NULL, "packageDir" TEXT NOT NULL, "entrypointPath" TEXT NOT NULL, "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ModelUploadRecord_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "ModelArtifact" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ModelUploadRecord_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "Group" ("id") ON DELETE SET NULL ON UPDATE CASCADE, CONSTRAINT "ModelUploadRecord_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE);`);
+  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ModelArtifact" ("id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "name" TEXT NOT NULL, "originalFilename" TEXT NOT NULL, "archivePath" TEXT NOT NULL, "packageDir" TEXT NOT NULL, "entrypointPath" TEXT NOT NULL, "enabled" BOOLEAN NOT NULL DEFAULT true, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ModelArtifact_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE);`);
+  await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ModelUploadRecord" ("id" TEXT NOT NULL PRIMARY KEY, "modelId" TEXT NOT NULL, "userId" TEXT NOT NULL, "originalFilename" TEXT NOT NULL, "archivePath" TEXT NOT NULL, "packageDir" TEXT NOT NULL, "entrypointPath" TEXT NOT NULL, "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ModelUploadRecord_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "ModelArtifact" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ModelUploadRecord_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE);`);
   await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ModelTestBatch" ("id" TEXT NOT NULL PRIMARY KEY, "kind" TEXT NOT NULL DEFAULT 'TEST', "status" TEXT NOT NULL DEFAULT 'PENDING', "question" TEXT, "createdById" TEXT NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "startedAt" DATETIME, "completedAt" DATETIME, "judgeStatus" TEXT NOT NULL DEFAULT 'NOT_REQUIRED', "judgeInputPath" TEXT, "judgeRawResponse" TEXT, "judgeRankingsJson" TEXT, "judgeReport" TEXT, "judgeError" TEXT, "judgeStartedAt" DATETIME, "judgeCompletedAt" DATETIME, CONSTRAINT "ModelTestBatch_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE);`);
   await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ModelTestResult" ("id" TEXT NOT NULL PRIMARY KEY, "batchId" TEXT NOT NULL, "modelId" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'PENDING', "durationMs" INTEGER, "peakMemoryKb" INTEGER, "outputPath" TEXT, "outputPreview" TEXT, "error" TEXT, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "startedAt" DATETIME, "completedAt" DATETIME, CONSTRAINT "ModelTestResult_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "ModelTestBatch" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ModelTestResult_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "ModelArtifact" ("id") ON DELETE CASCADE ON UPDATE CASCADE);`);
 
-  await addColumnIfMissing("User", "groupId", "TEXT");
-  await addColumnIfMissing("ModelArtifact", "groupId", "TEXT");
-  await rebuildModelTables();
+  await addColumnIfMissing("User", "role", "TEXT NOT NULL DEFAULT 'USER'");
+  await addColumnIfMissing("User", "enabled", "BOOLEAN NOT NULL DEFAULT true");
+  await addColumnIfMissing("User", "createdAt", "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP");
+  await addColumnIfMissing("ModelArtifact", "enabled", "BOOLEAN NOT NULL DEFAULT true");
+  await addColumnIfMissing("ModelArtifact", "createdAt", "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP");
 
-  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Group_name_key" ON "Group"("name");`);
-  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");`);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "User_groupId_idx" ON "User"("groupId");`);
+  await rebuildCoreTables();
+
+  await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "Group_name_key";`);
+  await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "User_groupId_idx";`);
   await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "ModelArtifact_groupId_key";`);
+  await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "ModelArtifact_groupId_idx";`);
+  await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "ModelUploadRecord_groupId_uploadedAt_idx";`);
+  await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");`);
   await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "ModelArtifact_userId_key";`);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ModelArtifact_groupId_idx" ON "ModelArtifact"("groupId");`);
 
   await migrateLegacyGroupUsers();
 
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ModelArtifact_userId_key" ON "ModelArtifact"("userId");`);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ModelUploadRecord_groupId_uploadedAt_idx" ON "ModelUploadRecord"("groupId", "uploadedAt");`);
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ModelUploadRecord_userId_uploadedAt_idx" ON "ModelUploadRecord"("userId", "uploadedAt");`);
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ModelUploadRecord_modelId_uploadedAt_idx" ON "ModelUploadRecord"("modelId", "uploadedAt");`);
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ModelTestResult_batchId_modelId_key" ON "ModelTestResult"("batchId", "modelId");`);
@@ -295,7 +297,7 @@ async function main() {
   await backfillModelUploadRecords();
   await deleteLegacyModelTestBatches();
 
-  console.log("SQLite tables are ready. Ranking data was preserved.");
+  console.log("SQLite tables are ready. User groups were removed and ranking data was preserved.");
 }
 
 main().finally(() => prisma.$disconnect());

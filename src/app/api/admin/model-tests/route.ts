@@ -14,7 +14,6 @@ type ConnectivityModel = {
   entrypointPath: string;
   packageDir: string;
   user: { username: string };
-  group: { name: string } | null;
 };
 
 type StreamEvent =
@@ -27,7 +26,6 @@ type PublicModelInfo = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   enabled: boolean;
 };
 
@@ -36,7 +34,6 @@ function toPublicModelInfo(model: ConnectivityModel): PublicModelInfo {
     modelId: model.id,
     modelName: model.name,
     username: model.user.username,
-    groupName: model.group?.name ?? null,
     enabled: model.enabled,
   };
 }
@@ -46,7 +43,7 @@ async function loadConnectivityModels(modelId?: string) {
   const targetIds = modelId ? uploadIds.filter((id) => id === modelId) : uploadIds;
   return prisma.modelArtifact.findMany({
     where: { id: { in: targetIds } },
-    include: { user: { select: { username: true } }, group: { select: { name: true } } },
+    include: { user: { select: { username: true } } },
     orderBy: { createdAt: "desc" },
   });
 }

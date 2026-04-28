@@ -7,7 +7,6 @@ export type ConnectivityPanelModel = {
   modelId: string;
   modelName: string;
   username: string;
-  groupName: string | null;
   enabled: boolean;
 };
 
@@ -280,7 +279,7 @@ export function ModelConnectivityTestPanel({ models }: { models: ConnectivityPan
             {visibleRows.map((row) => (
               <tr key={row.modelId}>
                 <td>
-                  <ModelIdentity modelName={row.modelName} username={row.username} groupName={row.groupName} />
+                  <ModelIdentity modelName={row.modelName} username={row.username} />
                 </td>
                 <td><StatusBadge status={row.status ?? "PENDING"} /></td>
                 <td>{formatDuration(row.durationMs)}</td>

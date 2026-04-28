@@ -1,7 +1,5 @@
-import { spawn } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 
 export type ModelRunStatus = "SCORED" | "INVALID_OUTPUT" | "TIME_LIMIT_EXCEEDED" | "RUNTIME_ERROR";
 
@@ -26,23 +24,28 @@ export type ModelQuestionResult = {
   peakMemoryKb?: number | null;
 };
 
-export const modelTimeoutMessage = "模型测试超过 300 秒，已终止任务";
+export function formatModelTimeoutMessage(timeoutMs: number) {
+  return `模型测试超过 ${Math.ceil(timeoutMs / 1000)} 秒，已终止任务`;
+}
+
+export const modelTimeoutMessage = formatModelTimeoutMessage(300_000);
 const outputLimit = 4000;
-const modelRunnerWrapperPath = join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "model_runner_wrapper.py");
+const memorySampleIntervalMs = 200;
 
 function remainingMs(deadline: number) {
   return Math.max(0, deadline - Date.now());
 }
 
-function timeoutResult(started: number, stdout = "", stderr = ""): ModelRunResult {
+function timeoutResult(started: number, timeoutMs: number, stdout = "", stderr = ""): ModelRunResult {
   const trimmedStdout = stdout.trim();
   const trimmedStderr = stderr.trim();
-  const message = trimmedStderr || modelTimeoutMessage;
+  const timeoutMessage = formatModelTimeoutMessage(timeoutMs);
+  const message = trimmedStderr || timeoutMessage;
   return {
     status: "TIME_LIMIT_EXCEEDED",
     stdout,
     stderr: message,
-    error: trimmedStdout ? `${modelTimeoutMessage}（已保留部分输出）` : modelTimeoutMessage,
+    error: trimmedStdout ? `${timeoutMessage}（已保留部分输出）` : timeoutMessage,
     durationMs: Date.now() - started,
   };
 }
@@ -52,25 +55,41 @@ function maxKnownNumber(...values: Array<number | null | undefined>) {
   return known.length ? Math.max(...known) : undefined;
 }
 
-function createMetricsPath() {
-  return join(tmpdir(), `bench-model-runner-metrics-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+function parseRssKb(output: string) {
+  const value = Number(output.trim().split(/\s+/)[0]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-async function readPeakMemoryKb(metricsPath: string) {
-  try {
-    const text = await readFile(metricsPath, "utf8");
-    const parsed = JSON.parse(text) as { peakMemoryKb?: unknown };
-    const value = Number(parsed.peakMemoryKb);
-    return Number.isFinite(value) && value > 0 ? value : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    await rm(metricsPath, { force: true }).catch(() => undefined);
-  }
+function startPeakMemoryMonitor(pid: number | undefined) {
+  let peakMemoryKb: number | undefined;
+  let stopped = false;
+  let inFlight = false;
+
+  const sample = () => {
+    if (!pid || stopped || inFlight) return;
+    inFlight = true;
+    execFile("ps", ["-o", "rss=", "-p", String(pid)], { timeout: 1000 }, (_error, stdout) => {
+      inFlight = false;
+      const rssKb = parseRssKb(stdout);
+      peakMemoryKb = maxKnownNumber(peakMemoryKb, rssKb);
+    });
+  };
+
+  sample();
+  const timer = setInterval(sample, memorySampleIntervalMs);
+  timer.unref?.();
+
+  return {
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+      return peakMemoryKb;
+    },
+  };
 }
 
-function buildQuestionTimeout(question: ModelQuestion): ModelQuestionResult {
-  return { id: question.id, question: question.question, status: "TIME_LIMIT_EXCEEDED", error: modelTimeoutMessage, durationMs: null, peakMemoryKb: null };
+function buildQuestionTimeout(question: ModelQuestion, timeoutMs: number): ModelQuestionResult {
+  return { id: question.id, question: question.question, status: "TIME_LIMIT_EXCEEDED", error: formatModelTimeoutMessage(timeoutMs), durationMs: null, peakMemoryKb: null };
 }
 
 function normalizePromptQuestionResult(question: ModelQuestion, result: ModelRunResult): ModelQuestionResult {
@@ -149,7 +168,7 @@ async function runSingleQuestionWithPrompt({
 }): Promise<ModelQuestionResult> {
   const started = Date.now();
   const deadline = started + timeoutMs;
-  if (remainingMs(deadline) <= 0) return buildQuestionTimeout(question);
+  if (remainingMs(deadline) <= 0) return buildQuestionTimeout(question, timeoutMs);
 
   const prompt = await runPromptPython({
     entrypointPath,
@@ -162,24 +181,25 @@ async function runSingleQuestionWithPrompt({
 }
 
 function runPython(args: string[], cwd: string, deadline: number, started: number): Promise<ModelRunResult> {
+  const limitMs = Math.max(0, deadline - started);
   const timeoutMs = remainingMs(deadline);
-  if (timeoutMs <= 0) return Promise.resolve(timeoutResult(started));
+  if (timeoutMs <= 0) return Promise.resolve(timeoutResult(started, limitMs));
   return new Promise((resolve) => {
     const runStartedAt = Date.now();
-    const metricsPath = createMetricsPath();
-    const child = spawn("python3", [modelRunnerWrapperPath, args[0], ...args.slice(1)], {
+    const child = spawn("python3", args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, MODEL_RUNNER_METRICS_PATH: metricsPath },
+      env: process.env,
     });
+    const memoryMonitor = startPeakMemoryMonitor(child.pid);
     let settled = false;
     let stdout = "";
     let stderr = "";
-    const finish = async (result: ModelRunResult) => {
+    const finish = (result: ModelRunResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      const peakMemoryKb = await readPeakMemoryKb(metricsPath);
+      const peakMemoryKb = memoryMonitor.stop();
       resolve({ ...result, peakMemoryKb: maxKnownNumber(peakMemoryKb, result.peakMemoryKb) });
     };
     const timer = setTimeout(() => {
@@ -188,13 +208,13 @@ function runPython(args: string[], cwd: string, deadline: number, started: numbe
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-outputLimit); });
     child.on("close", (code, signal) => {
-      if (signal === "SIGKILL") return void finish(timeoutResult(runStartedAt, stdout, stderr));
+      if (signal === "SIGKILL") return finish(timeoutResult(runStartedAt, limitMs, stdout, stderr));
       const durationMs = Date.now() - runStartedAt;
-      if (code === 0) return void finish({ status: "SCORED", stdout, stderr, durationMs });
-      return void finish({ status: "RUNTIME_ERROR", stdout, stderr, error: (stderr || stdout || "RUNTIME_ERROR").slice(0, outputLimit), durationMs });
+      if (code === 0) return finish({ status: "SCORED", stdout, stderr, durationMs });
+      return finish({ status: "RUNTIME_ERROR", stdout, stderr, error: (stderr || stdout || "RUNTIME_ERROR").slice(0, outputLimit), durationMs });
     });
     child.on("error", (err) => {
-      void finish({ status: "RUNTIME_ERROR", stdout, stderr: (stderr || err.message).slice(-outputLimit), error: (stderr || err.message).slice(0, outputLimit), durationMs: Date.now() - runStartedAt });
+      finish({ status: "RUNTIME_ERROR", stdout, stderr: (stderr || err.message).slice(-outputLimit), error: (stderr || err.message).slice(0, outputLimit), durationMs: Date.now() - runStartedAt });
     });
   });
 }
