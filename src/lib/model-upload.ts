@@ -19,7 +19,7 @@ export function assertModelStorageId(id: string) {
 export function modelStoragePaths(id: string) {
   assertModelStorageId(id);
   const root = join(/*turbopackIgnore: true*/ process.cwd(), "uploads", "models", id);
-  return { root, archivePath: join(root, "model.zip"), packageDir: join(root, "package"), runsDir: join(root, "runs") };
+  return { root, archivePath: join(root, `${id}.zip`), packageDir: join(root, "package"), runsDir: join(root, "runs") };
 }
 
 export async function renameModelUpload(oldId: string, newId: string) {
@@ -225,17 +225,20 @@ async function validateAndExtractModelUpload(paths: ReturnType<typeof modelStora
 
 async function commitModelUpload(id: string, staged: Awaited<ReturnType<typeof validateAndExtractModelUpload>>) {
   const paths = modelStoragePaths(id);
+  const legacyArchivePath = join(paths.root, "model.zip");
   const entrypointRelativePath = relative(staged.packageDir, staged.entrypointPath);
 
   await mkdir(paths.root, { recursive: true });
   await mkdir(paths.runsDir, { recursive: true });
   await rm(paths.archivePath, { force: true });
+  if (legacyArchivePath !== paths.archivePath) await rm(legacyArchivePath, { force: true });
   await rm(paths.packageDir, { recursive: true, force: true });
+  await rename(staged.archivePath, paths.archivePath);
   await rename(staged.packageDir, paths.packageDir);
   await rm(staged.root, { recursive: true, force: true });
 
   const entrypointPath = join(paths.packageDir, entrypointRelativePath);
-  return { ...paths, archivePath: "", entrypointPath, workingDir: dirname(entrypointPath) };
+  return { ...paths, entrypointPath, workingDir: dirname(entrypointPath) };
 }
 
 export async function saveModelUpload(id: string, file: File) {

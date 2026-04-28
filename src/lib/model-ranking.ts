@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { readModelQuestions, type ModelQuestion } from "@/lib/model-runner";
 
@@ -81,6 +81,18 @@ function requireEnv(name: string) {
   return value;
 }
 
+function optionalEnv(name: string) {
+  const value = process.env[name]?.trim();
+  return value || undefined;
+}
+
+function readJudgeOllamaKeepAlive() {
+  const value = optionalEnv("JUDGE_OLLAMA_KEEP_ALIVE");
+  if (!value) return undefined;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && String(numeric) === value ? numeric : value;
+}
+
 export function assertJudgeConfig() {
   requireEnv("JUDGE_API_BASE_URL");
   requireEnv("JUDGE_API_KEY");
@@ -126,17 +138,71 @@ export async function writeLeaderboardSnapshot(batchId: string, snapshot: unknow
   return resolve(paths.leaderboardSnapshotPath);
 }
 
-function extractJsonObject(text: string) {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const candidate = (fenced ?? text).trim();
+export async function clearRankingJudgeArtifacts(batchId: string) {
+  const paths = modelRankingPaths(batchId);
+  await Promise.all([
+    rm(paths.judgeInputPath, { force: true }).catch(() => undefined),
+    rm(paths.leaderboardSnapshotPath, { force: true }).catch(() => undefined),
+  ]);
+}
+
+function extractFirstJsonValue(text: string) {
+  const candidate = text.trim();
   try {
     return JSON.parse(candidate);
   } catch {
-    const start = candidate.indexOf("{");
-    const end = candidate.lastIndexOf("}");
-    if (start >= 0 && end > start) return JSON.parse(candidate.slice(start, end + 1));
-    throw new Error("裁判模型未返回有效 JSON");
+    // Fall through and scan for the first complete JSON object or array.
   }
+
+  for (let start = 0; start < candidate.length; start += 1) {
+    const first = candidate[start];
+    if (first !== "{" && first !== "[") continue;
+    const stack = [first];
+    let inString = false;
+    let escaped = false;
+    for (let index = start + 1; index < candidate.length; index += 1) {
+      const char = candidate[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (char === "\"") inString = false;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = true;
+        continue;
+      }
+      if (char === "{" || char === "[") {
+        stack.push(char);
+        continue;
+      }
+      if (char === "}" || char === "]") {
+        const expected = char === "}" ? "{" : "[";
+        if (stack[stack.length - 1] !== expected) break;
+        stack.pop();
+        if (stack.length === 0) {
+          return JSON.parse(candidate.slice(start, index + 1));
+        }
+      }
+    }
+  }
+
+  throw new Error("裁判模型未返回有效 JSON");
+}
+
+function extractJsonObject(text: string) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = (fenced ?? text).trim();
+  const parsed = extractFirstJsonValue(candidate);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("裁判模型未返回有效 JSON");
+  return parsed;
 }
 
 function normalizeJudgeReport(value: unknown, questionMeta: Pick<RankingJudgeQuestionInput, "questionId" | "question">): JudgeQuestionReport {
@@ -184,10 +250,11 @@ export function createEmptyJudgeReport(input: RankingJudgeQuestionInput): JudgeQ
   };
 }
 
-export async function judgeModelRanking(input: RankingJudgeQuestionInput) {
+export async function judgeModelRanking(input: RankingJudgeQuestionInput, options: { unloadAfterResponse?: boolean } = {}) {
   const baseUrl = requireEnv("JUDGE_API_BASE_URL").replace(/\/+$/, "");
   const apiKey = requireEnv("JUDGE_API_KEY");
   const model = requireEnv("JUDGE_MODEL");
+  const ollamaKeepAlive = options.unloadAfterResponse ? 0 : readJudgeOllamaKeepAlive();
   const prompt = [
     "你是一个严格、公正的大模型回答质量裁判。请根据准确性、完整性、结构清晰度、事实可靠性和中文表达质量排序。",
     "只要 answers 中有输出文本，该模型就必须参与质量排名。",
@@ -200,14 +267,20 @@ export async function judgeModelRanking(input: RankingJudgeQuestionInput) {
     "评测输入如下：",
     JSON.stringify(input, null, 2),
   ].join("\n");
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+  };
+  if (ollamaKeepAlive !== undefined) requestBody.keep_alive = ollamaKeepAlive;
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.2 }),
+    body: JSON.stringify(requestBody),
   });
   const bodyText = await response.text();
   if (!response.ok) throw new Error(`裁判模型调用失败: HTTP ${response.status}`);
-  const body = JSON.parse(bodyText) as ChatCompletionResponse;
+  const body = extractJsonObject(bodyText) as ChatCompletionResponse;
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error("裁判模型响应缺少 content");
   const report = normalizeJudgeReport(extractJsonObject(content), input);

@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { loadEnvConfig } from "@next/env";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { buildLeaderboardSnapshot } from "../src/lib/model-leaderboard";
 import { modelRunPaths, modelRuntimeLimitMs } from "../src/lib/model-upload";
@@ -12,6 +12,7 @@ loadEnvConfig(process.cwd());
 const prisma = new PrismaClient();
 const pollMs = 1000;
 const outputLimit = 4000;
+const latestRankingModelArchivesRoot = join(/*turbopackIgnore: true*/ process.cwd(), "uploads", "model-ranking-models", "latest");
 
 function averageMetric(values: Array<number | null | undefined>) {
   const valid = values.filter((value): value is number => value != null && Number.isFinite(value));
@@ -44,6 +45,24 @@ type ParsedRankingModelResult = {
 
 function modelOwnerName(model: { name: string; user: { username: string } }) {
   return model.user.username;
+}
+
+async function refreshLatestRankingModelArchives(batch: LoadedRankingBatch) {
+  await rm(latestRankingModelArchivesRoot, { recursive: true, force: true });
+  await mkdir(latestRankingModelArchivesRoot, { recursive: true });
+
+  for (const result of batch.results) {
+    const username = modelOwnerName(result.model);
+    if (!result.model.archivePath || result.model.archivePath === "pending") {
+      throw new Error(`模型 ${username} 缺少可归档的 zip 文件`);
+    }
+    try {
+      await copyFile(result.model.archivePath, join(latestRankingModelArchivesRoot, `${username}.zip`));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
+      throw new Error(`无法归档模型 ${username} 的 zip 文件: ${message}`);
+    }
+  }
 }
 
 async function loadRankingBatch(batchId: string) {
@@ -129,6 +148,30 @@ function parseStoredRawResponses(value: string | null, questions: { id: string }
   } catch {
     return [];
   }
+}
+
+function findNextMissingRankingQuestion(
+  parsedModelResults: ParsedRankingModelResult[],
+  questions: { id: string; question: string }[],
+) {
+  for (const result of parsedModelResults) {
+    const answeredQuestionIds = new Set(result.questionResults.map((item) => item.id));
+    const question = questions.find((item) => !answeredQuestionIds.has(item.id));
+    if (question) return { result, question };
+  }
+  return null;
+}
+
+function isFinalJudgeModelCall(
+  input: RankingJudgeBatchInput,
+  questionReportMap: Map<string, JudgeQuestionReport>,
+  currentQuestionId: string,
+) {
+  return !input.questions.some((question) =>
+    question.questionId !== currentQuestionId
+    && !questionReportMap.has(question.questionId)
+    && question.answers.length > 0,
+  );
 }
 
 async function readStoredQuestionResults(outputPath: string | null | undefined, questions: { id: string; question: string }[]) {
@@ -227,7 +270,6 @@ async function persistRankingJudgeProgress({
   await prisma.modelTestBatch.update({
     where: { id: batchId },
     data: {
-      status: "RUNNING",
       judgeStatus: "RUNNING",
       judgeStartedAt,
       judgeInputPath,
@@ -275,6 +317,7 @@ async function finalizeRankingBatch({
     questionReports: orderedReports,
     modelResults: parsedModelResults,
   });
+  await refreshLatestRankingModelArchives(batch);
   await writeLeaderboardSnapshot(batch.id, snapshot);
   await prisma.modelTestBatch.update({
     where: { id: batch.id },
@@ -386,86 +429,124 @@ async function executeRankingQuestion({
   });
 }
 
+async function processRankingModelStage(batch: LoadedRankingBatch) {
+  await prisma.modelTestBatch.update({
+    where: { id: batch.id },
+    data: { status: "RUNNING", startedAt: batch.startedAt ?? new Date(), judgeError: null },
+  });
+  const { questions, parsedModelResults } = await buildRankingExecutionState(batch);
+  const nextMissing = findNextMissingRankingQuestion(parsedModelResults, questions);
+  if (nextMissing) {
+    const targetResult = batch.results.find((result) => result.id === nextMissing.result.resultId);
+    if (!targetResult) throw new Error(`未找到批次结果 ${nextMissing.result.resultId}`);
+    await executeRankingQuestion({
+      batch,
+      modelResult: targetResult,
+      question: nextMissing.question,
+      questions,
+      existingQuestionResults: nextMissing.result.questionResults,
+    });
+    return;
+  }
+
+  const completedAt = batch.completedAt ?? new Date();
+  await prisma.modelTestBatch.update({
+    where: { id: batch.id },
+    data: {
+      status: "COMPLETED",
+      completedAt,
+      judgeStatus: batch.judgeStatus === "PENDING" || batch.judgeStatus === "RUNNING" || batch.judgeStatus === "COMPLETED" ? batch.judgeStatus : "READY",
+      judgeError: null,
+    },
+  });
+}
+
+async function processRankingJudgeStage(batch: LoadedRankingBatch) {
+  const { questions, input, parsedModelResults } = await buildRankingExecutionState(batch);
+  const storedQuestionReports = parseStoredJudgeReports(batch.judgeReport, questions);
+  const storedRawResponses = parseStoredRawResponses(batch.judgeRawResponse, questions);
+  const questionReportMap = new Map(storedQuestionReports.map((report) => [report.questionId, report] as const));
+  const rawResponseMap = new Map(storedRawResponses.map((item) => [item.questionId, item.rawResponse] as const));
+  const completedAt = batch.completedAt ?? new Date();
+
+  if (!batch.completedAt) {
+    await prisma.modelTestBatch.update({
+      where: { id: batch.id },
+      data: { status: "COMPLETED", completedAt },
+    });
+  }
+  const completedBatch = { ...batch, status: "COMPLETED", completedAt };
+
+  for (const question of questions) {
+    const questionInput = input.questions.find((item) => item.questionId === question.id);
+    if (!questionInput) continue;
+    if (questionReportMap.has(question.id)) continue;
+    const judgeStartedAt = batch.judgeStartedAt ?? new Date();
+    await prisma.modelTestBatch.update({
+      where: { id: batch.id },
+      data: { judgeStatus: "RUNNING", judgeStartedAt, judgeError: null },
+    });
+    const judged = questionInput.answers.length === 0
+      ? { report: createEmptyJudgeReport(questionInput), rawResponse: null }
+      : await judgeModelRanking(questionInput, { unloadAfterResponse: isFinalJudgeModelCall(input, questionReportMap, question.id) });
+    questionReportMap.set(question.id, judged.report);
+    rawResponseMap.set(question.id, judged.rawResponse);
+    const questionReports = questions
+      .map((item) => questionReportMap.get(item.id))
+      .filter((report): report is JudgeQuestionReport => Boolean(report));
+    const rawResponses = questions
+      .filter((item) => questionReportMap.has(item.id))
+      .map((item) => ({ questionId: item.id, rawResponse: rawResponseMap.get(item.id) ?? null }));
+    if (questionReports.length >= questions.length) {
+      await finalizeRankingBatch({
+        batch: completedBatch,
+        questions,
+        input,
+        parsedModelResults,
+        questionReports,
+        rawResponses,
+      });
+    } else {
+      await persistRankingJudgeProgress({
+        batchId: batch.id,
+        questions,
+        input,
+        questionReports,
+        rawResponses,
+        judgeStartedAt,
+      });
+    }
+    return;
+  }
+
+  await finalizeRankingBatch({
+    batch: completedBatch,
+    questions,
+    input,
+    parsedModelResults,
+    questionReports: [...questionReportMap.values()],
+    rawResponses: [...rawResponseMap.entries()].map(([questionId, rawResponse]) => ({ questionId, rawResponse })),
+  });
+}
+
 async function processRankingBatch(batchId: string) {
   const batch = await loadRankingBatch(batchId);
   if (!batch || batch.kind !== "RANKING") return;
-  if (batch.status === "COMPLETED" && batch.judgeStatus === "COMPLETED") return;
   try {
-    await prisma.modelTestBatch.update({
-      where: { id: batchId },
-      data: { status: "RUNNING", startedAt: batch.startedAt ?? new Date(), judgeError: null },
-    });
-    const { questions, input, parsedModelResults } = await buildRankingExecutionState(batch);
-    const storedQuestionReports = parseStoredJudgeReports(batch.judgeReport, questions);
-    const storedRawResponses = parseStoredRawResponses(batch.judgeRawResponse, questions);
-    const questionReportMap = new Map(storedQuestionReports.map((report) => [report.questionId, report] as const));
-    const rawResponseMap = new Map(storedRawResponses.map((item) => [item.questionId, item.rawResponse] as const));
-
-    for (const question of questions) {
-      const questionInput = input.questions.find((item) => item.questionId === question.id);
-      if (!questionInput) continue;
-      const missingModel = parsedModelResults.find((result) => !result.questionResults.some((item) => item.id === question.id));
-      if (missingModel) {
-        const targetResult = batch.results.find((result) => result.id === missingModel.resultId);
-        if (!targetResult) throw new Error(`未找到批次结果 ${missingModel.resultId}`);
-        await executeRankingQuestion({
-          batch,
-          modelResult: targetResult,
-          question,
-          questions,
-          existingQuestionResults: missingModel.questionResults,
-        });
-        return;
-      }
-      if (questionReportMap.has(question.id)) continue;
-      const judgeStartedAt = batch.judgeStartedAt ?? new Date();
-      await prisma.modelTestBatch.update({
-        where: { id: batchId },
-        data: { judgeStatus: "RUNNING", judgeStartedAt, judgeError: null },
-      });
-      const judged = questionInput.answers.length === 0
-        ? { report: createEmptyJudgeReport(questionInput), rawResponse: null }
-        : await judgeModelRanking(questionInput);
-      questionReportMap.set(question.id, judged.report);
-      rawResponseMap.set(question.id, judged.rawResponse);
-      const questionReports = questions
-        .map((item) => questionReportMap.get(item.id))
-        .filter((report): report is JudgeQuestionReport => Boolean(report));
-      const rawResponses = questions
-        .filter((item) => questionReportMap.has(item.id))
-        .map((item) => ({ questionId: item.id, rawResponse: rawResponseMap.get(item.id) ?? null }));
-      if (questionReports.length >= questions.length) {
-        await finalizeRankingBatch({
-          batch,
-          questions,
-          input,
-          parsedModelResults,
-          questionReports,
-          rawResponses,
-        });
-      } else {
-        await persistRankingJudgeProgress({
-          batchId,
-          questions,
-          input,
-          questionReports,
-          rawResponses,
-          judgeStartedAt,
-        });
-      }
+    if (batch.status === "PENDING" || batch.status === "RUNNING") {
+      await processRankingModelStage(batch);
       return;
     }
-
-    await finalizeRankingBatch({
-      batch,
-      questions,
-      input,
-      parsedModelResults,
-      questionReports: [...questionReportMap.values()],
-      rawResponses: [...rawResponseMap.entries()].map(([questionId, rawResponse]) => ({ questionId, rawResponse })),
-    });
+    if (batch.status === "COMPLETED" && (batch.judgeStatus === "PENDING" || batch.judgeStatus === "RUNNING")) {
+      await processRankingJudgeStage(batch);
+    }
   } catch (err) {
-    await prisma.modelTestBatch.update({ where: { id: batchId }, data: { judgeStatus: "FAILED", judgeError: err instanceof Error ? err.message : "裁判评测失败", judgeCompletedAt: new Date() } });
+    const message = err instanceof Error ? err.message : "排名批次执行失败";
+    if (batch.status === "PENDING" || batch.status === "RUNNING") {
+      await prisma.modelTestBatch.update({ where: { id: batchId }, data: { status: "FAILED", judgeError: message } });
+      return;
+    }
+    await prisma.modelTestBatch.update({ where: { id: batchId }, data: { judgeStatus: "FAILED", judgeError: message, judgeCompletedAt: new Date() } });
   }
 }
 

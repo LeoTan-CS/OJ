@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { AdminNav, AppShell } from "@/components/shell";
 import { CollapsiblePanel } from "@/components/collapsible-panel";
-import { DeleteButton, ModelRankingButton } from "@/components/admin-forms";
+import { DeleteButton, JudgeRankingButton, ModelTestBatchButton, RerunRankingModelButton } from "@/components/admin-forms";
 import { Card, ModelIdentity, StatusBadge } from "@/components/ui";
 import { readLeaderboardSnapshot, type LeaderboardSnapshot } from "@/lib/model-leaderboard";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
@@ -15,6 +15,11 @@ function formatDate(value: Date | string | null) {
 
 function formatAverage(value: number) {
   return value.toFixed(2).replace(/\.00$/, "");
+}
+
+function judgeActionLabel(status: string) {
+  if (status === "COMPLETED" || status === "FAILED") return "重新裁判排名";
+  return "开始裁判排名";
 }
 
 function parseJson<T>(text: string | null): T | null {
@@ -152,9 +157,9 @@ export default async function AdminModelRankingsPage() {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-xl font-bold">模型排名</h1>
-              <p className="mt-1 text-sm text-slate-500">点击后会按题目顺序执行：先让所有启用模型完成当前题，再由裁判大模型对这一题生成质量排名与报告，然后进入下一题。</p>
+              <p className="mt-1 text-sm text-slate-500">先创建一轮模型测试批次，等所有启用模型都完成输出后，再在具体批次里单独点击“裁判排名”按钮生成逐题质量报告。</p>
             </div>
-            <ModelRankingButton />
+            <ModelTestBatchButton />
           </div>
         </Card>
         <Card>
@@ -178,14 +183,29 @@ export default async function AdminModelRankingsPage() {
             {batches.map((batch, index) => {
               const snapshot = snapshotMap.get(batch.id);
               const rankings = parseJson<JudgeRanking[]>(batch.judgeRankingsJson) ?? [];
+              const judgeDisabled = batch.status !== "COMPLETED" || batch.judgeStatus === "PENDING" || batch.judgeStatus === "RUNNING";
+              const rerunDisabled = batch.status === "RUNNING" || batch.judgeStatus === "PENDING" || batch.judgeStatus === "RUNNING";
               return (
                 <CollapsiblePanel
                   key={batch.id}
                   defaultExpanded={index === 0}
                   className="rounded-xl border p-4"
                   header={<div><div className="font-semibold">批次 {batch.id}</div><div className="text-xs text-slate-500">创建人 {batch.createdBy.username} · {formatDate(batch.createdAt)}</div><div className="mt-1 text-xs text-slate-500">题库：{batch.question ?? questionSummary}</div></div>}
-                  actions={<><StatusBadge status={batch.status} /><span className="text-xs text-slate-500">裁判</span><StatusBadge status={batch.judgeStatus} /><DeleteButton endpoint={`/api/admin/model-tests/${batch.id}`} /></>}
+                  actions={<div className="flex flex-wrap items-center gap-2"><StatusBadge status={batch.status} /><span className="text-xs text-slate-500">裁判</span><StatusBadge status={batch.judgeStatus} /><JudgeRankingButton batchId={batch.id} disabled={judgeDisabled} label={judgeActionLabel(batch.judgeStatus)} /><DeleteButton endpoint={`/api/admin/model-tests/${batch.id}`} /></div>}
                 >
+                  <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    {batch.status === "FAILED"
+                      ? "模型测试阶段失败了。可以对需要修复的模型单独重跑，完成后再重新执行裁判排名。"
+                      : batch.status !== "COMPLETED"
+                      ? "当前处于模型测试阶段。模型全部完成后，这个批次会进入可裁判状态。"
+                      : batch.judgeStatus === "READY" || batch.judgeStatus === "WAITING"
+                        ? "模型测试已完成，可以点击上方按钮开始裁判排名。"
+                      : batch.judgeStatus === "PENDING" || batch.judgeStatus === "RUNNING"
+                          ? "裁判排名正在进行中。"
+                          : batch.judgeStatus === "FAILED"
+                            ? "裁判排名失败了。可以直接重试裁判，或者先重跑单个模型后再重新裁判。"
+                            : "该批次已经有裁判结果；如果重跑任意模型，需要重新执行裁判排名。"}
+                  </div>
                   <table className="mt-3">
                     <tbody>
                       {batch.results.map((result) => (
@@ -194,6 +214,7 @@ export default async function AdminModelRankingsPage() {
                           <td><StatusBadge status={result.status} /></td>
                           <td>{result.durationMs ? `${result.durationMs}ms` : "-"}</td>
                           <td className="max-w-md"><div className="truncate text-xs text-slate-500">{result.outputPath ?? result.error ?? "-"}</div>{result.outputPreview && <details className="mt-1 text-xs"><summary className="cursor-pointer text-slate-600">回答预览</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2">{result.outputPreview}</pre></details>}{result.error && <div className="mt-1 text-xs text-red-600">{result.error}</div>}</td>
+                          <td className="w-28 align-top"><RerunRankingModelButton batchId={batch.id} modelId={result.modelId} disabled={rerunDisabled} /></td>
                         </tr>
                       ))}
                     </tbody>

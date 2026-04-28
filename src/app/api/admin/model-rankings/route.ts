@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { error, handle, json } from "@/lib/http";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
-import { assertJudgeConfig, readDefaultModelRankingQuestions, summarizeRankingQuestions, writeRankingQuestion } from "@/lib/model-ranking";
+import { readDefaultModelRankingQuestions, summarizeRankingQuestions, writeRankingQuestion } from "@/lib/model-ranking";
 import { prisma } from "@/lib/prisma";
 import { publicUserSelect } from "@/lib/user-select";
 
@@ -30,7 +30,6 @@ export async function GET() {
 export async function POST() {
   return handle(async () => {
     const admin = await requireAdmin();
-    assertJudgeConfig();
     const uploadIds = await getSyncedModelUploadIds();
     const models = await prisma.modelArtifact.findMany({ where: { id: { in: uploadIds }, enabled: true }, select: { id: true } });
     if (models.length === 0) return error("没有启用的模型可排名", 400);
@@ -46,7 +45,7 @@ export async function POST() {
         question: questionSummary,
         createdById: admin.id,
         status: "PENDING",
-        judgeStatus: "PENDING",
+        judgeStatus: "WAITING",
         results: { create: models.map((model) => ({ modelId: model.id })) },
       },
       include: { results: true },
