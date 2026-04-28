@@ -189,7 +189,7 @@ function runPython(args: string[], cwd: string, deadline: number, started: numbe
     const child = spawn("python3", args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, PYTORCH_ENABLE_MPS_FALLBACK: process.env.PYTORCH_ENABLE_MPS_FALLBACK ?? "1" },
     });
     const memoryMonitor = startPeakMemoryMonitor(child.pid);
     let settled = false;
