@@ -13,7 +13,7 @@ export async function POST() {
     if (user.role !== "USER") return error("只有普通用户可以测试自己的模型", 400);
     const uploadIds = await getSyncedModelUploadIds();
     if (!uploadIds.includes(user.username)) return error("请先上传模型", 400);
-    const model = await prisma.modelArtifact.findUnique({ where: { userId: user.id } });
+    const model = await prisma.modelArtifact.findFirst({ where: { id: user.username, userId: user.id } });
     if (!model) return error("请先上传模型", 400);
 
     const result = await runModelConnectivityTest({

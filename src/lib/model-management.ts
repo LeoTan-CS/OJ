@@ -44,7 +44,7 @@ export async function renameUserModelIdentity({
   userId: string;
   newUsername: string;
 }) {
-  const model = await db.modelArtifact.findUnique({ where: { userId } });
+  const model = await db.modelArtifact.findFirst({ where: { userId } });
   if (!model) return null;
   const oldId = model.id;
   const newId = newUsername;
