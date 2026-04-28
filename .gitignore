@@ -46,3 +46,6 @@ next-env.d.ts
 
 # uploaded competition datasets
 /uploads/
+
+# local Singularity runtime images
+/runtime/

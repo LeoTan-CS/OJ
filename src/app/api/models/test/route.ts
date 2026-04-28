@@ -22,6 +22,6 @@ export async function POST() {
       prompt,
       timeoutMs: modelRuntimeLimitMs,
     });
-    return json(result);
+    return json({ success: result.status === "SCORED" });
   });
 }

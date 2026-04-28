@@ -263,14 +263,14 @@ export function ModelEnabledToggle({ modelId, enabled }: { modelId: string; enab
 
 export function UserModelTestButton() {
   const [pending, setPending] = useState(false);
-  const [result, setResult] = useState<{ status: string; answer?: string; error?: string; durationMs?: number } | null>(null);
+  const [result, setResult] = useState<{ success: boolean } | null>(null);
   async function run() {
     setPending(true);
     setResult(null);
     const res = await fetch("/api/models/test", { method: "POST" });
-    const data = await res.json().catch(() => ({ status: "RUNTIME_ERROR", error: "测试失败" }));
+    const data = await res.json().catch(() => ({ success: false }));
     setPending(false);
-    setResult(res.ok ? data : { status: data.status ?? "RUNTIME_ERROR", error: data.error ?? "测试失败", durationMs: data.durationMs });
+    setResult(res.ok ? { success: Boolean(data.success) } : { success: false });
   }
-  return <div className="grid gap-4"><button type="button" onClick={run} disabled={pending} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? "测试中..." : "用示例问题测试模型"}</button>{result && <section className={result.status === "SCORED" ? "rounded-2xl border border-emerald-100 bg-emerald-50 p-5 text-emerald-900" : "rounded-2xl border border-red-100 bg-red-50 p-5 text-red-800"}><div className="flex flex-wrap items-center justify-between gap-2"><div className="text-sm font-bold">测试结果</div><div className="rounded-full bg-white/70 px-3 py-1 text-xs font-bold">{result.status}{result.durationMs ? ` · ${result.durationMs}ms` : ""}</div></div><pre className="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words font-sans text-sm leading-7">{result.answer ?? result.error ?? "-"}</pre></section>}</div>;
+  return <div className="grid gap-4"><button type="button" onClick={run} disabled={pending} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? "测试中..." : "用示例问题测试模型"}</button>{result && <section className={result.success ? "rounded-2xl border border-emerald-100 bg-emerald-50 p-5 text-emerald-900" : "rounded-2xl border border-red-100 bg-red-50 p-5 text-red-800"}><div className="text-sm font-bold">测试结果</div><div className="mt-2 text-base font-semibold">{result.success ? "测试成功" : "测试失败"}</div></section>}</div>;
 }

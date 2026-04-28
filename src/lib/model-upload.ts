@@ -7,6 +7,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { assertModelUploadSize } from "@/lib/model-upload-limits";
+import { reviewExtractedModelUpload } from "@/lib/model-upload-review";
 
 const execFileAsync = promisify(execFile);
 
@@ -237,7 +238,9 @@ async function validateAndExtractModelUpload(paths: ReturnType<typeof modelStora
   if (!entrypoint) throw new Error("模型压缩包中必须包含顶层 main.py，或单一根目录下的 main.py");
 
   await extractZip(paths.archivePath, paths.packageDir);
-  return { ...paths, entrypointPath: join(paths.packageDir, entrypoint), workingDir: dirname(join(paths.packageDir, entrypoint)) };
+  const entrypointPath = join(paths.packageDir, entrypoint);
+  await reviewExtractedModelUpload(paths.packageDir);
+  return { ...paths, entrypointPath, workingDir: dirname(entrypointPath) };
 }
 
 async function commitModelUpload(id: string, staged: Awaited<ReturnType<typeof validateAndExtractModelUpload>>) {
