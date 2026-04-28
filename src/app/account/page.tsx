@@ -3,7 +3,6 @@ import { AppShell } from "@/components/shell";
 import { Card } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import PasswordForm from "./password-form";
-import ProfileForm from "./profile-form";
 
 function roleLabel(role: string) {
   if (role === "SUPER_ADMIN") return "超级管理员";
@@ -31,11 +30,7 @@ export default async function AccountPage() {
           </div>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
-            <h2 className="text-xl font-bold">资料设置</h2>
-            <ProfileForm key={user.username} currentUsername={user.username} />
-          </Card>
+        <div className="max-w-3xl">
           <Card>
             <h2 className="text-xl font-bold">安全设置</h2>
             <PasswordForm />

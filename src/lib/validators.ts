@@ -1,11 +1,5 @@
 import { z } from "zod";
 
-const optionalPasswordSchema = z.preprocess((value) => {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
-}, z.string().min(4).optional());
-
 const optionalGroupIdSchema = z.preprocess((value) => {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
@@ -16,11 +10,6 @@ const usernameSchema = z.string().trim().min(2).regex(/^[A-Za-z0-9_.-]+$/, "ç”¨æ
 
 export const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
 export const passwordSchema = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(4) });
-export const accountProfileSchema = z.object({
-  username: usernameSchema,
-  currentPassword: z.string().min(1),
-  newPassword: optionalPasswordSchema,
-});
 export const userSchema = z.object({
   username: usernameSchema,
   password: z.string().min(4).optional(),

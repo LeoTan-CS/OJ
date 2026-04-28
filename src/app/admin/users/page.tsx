@@ -1,23 +1,48 @@
 export const dynamic = "force-dynamic";
 
 import { AdminNav, AppShell } from "@/components/shell";
-import { DeleteButton, JsonForm, UserImportForm } from "@/components/admin-forms";
+import { JsonForm, UserImportForm } from "@/components/admin-forms";
+import { AdminUserTable, type AdminUserTableUser } from "@/components/admin-user-table";
 import { Card } from "@/components/ui";
+import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 function formatDate(value: Date) {
   return value.toLocaleString("zh-CN", { hour12: false });
 }
 
+function toTableRole(role: string): AdminUserTableUser["role"] {
+  if (role === "SUPER_ADMIN" || role === "ADMIN") return role;
+  return "USER";
+}
+
 export default async function UsersPage() {
+  const actor = await requireAdmin();
+  const actorRole = actor.role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ADMIN";
   const [users, groups] = await Promise.all([
     prisma.user.findMany({ include: { group: true }, orderBy: { createdAt: "desc" } }),
     prisma.group.findMany({ include: { _count: { select: { users: true, models: true } } }, orderBy: { name: "asc" } }),
   ]);
+  const roleOptions = actorRole === "SUPER_ADMIN"
+    ? [
+        { label: "USER", value: "USER" },
+        { label: "ADMIN", value: "ADMIN" },
+        { label: "SUPER_ADMIN", value: "SUPER_ADMIN" },
+      ]
+    : [{ label: "USER", value: "USER" }];
   const groupOptions = [
     { label: "不分配", value: "" },
     ...groups.map((group) => ({ label: group.name, value: group.id })),
   ];
+  const tableUsers: AdminUserTableUser[] = users.map((user) => ({
+    id: user.id,
+    username: user.username,
+    role: toTableRole(user.role),
+    groupId: user.groupId,
+    groupName: user.group?.name ?? null,
+    createdAtLabel: formatDate(user.createdAt),
+  }));
+  const tableKey = tableUsers.map((user) => `${user.id}:${user.username}:${user.role}:${user.groupId ?? ""}`).join("|");
 
   return (
     <AppShell admin>
@@ -35,11 +60,7 @@ export default async function UsersPage() {
                   {
                     name: "role",
                     label: "角色",
-                    options: [
-                      { label: "USER", value: "USER" },
-                      { label: "ADMIN", value: "ADMIN" },
-                      { label: "SUPER_ADMIN", value: "SUPER_ADMIN" },
-                    ],
+                    options: roleOptions,
                   },
                   { name: "groupId", label: "组别标记", options: groupOptions },
                 ]}
@@ -79,28 +100,7 @@ export default async function UsersPage() {
 
         <Card>
           <h1 className="text-xl font-bold">用户列表</h1>
-          <table className="mt-4">
-            <thead>
-              <tr>
-                <th>用户名</th>
-                <th>角色</th>
-                <th>组别标记</th>
-                <th>创建时间</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id}>
-                  <td className="font-semibold text-slate-950">{user.username}</td>
-                  <td>{user.role}</td>
-                  <td>{user.group?.name ?? "未分组"}</td>
-                  <td>{formatDate(user.createdAt)}</td>
-                  <td><DeleteButton endpoint={`/api/admin/users/${user.id}`} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <AdminUserTable key={tableKey} actorRole={actorRole} groups={groupOptions} users={tableUsers} />
         </Card>
       </div>
     </AppShell>
