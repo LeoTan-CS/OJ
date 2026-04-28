@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { formatModelUploadSize, modelUploadMaxBytes, modelUploadMaxSizeLabel } from "@/lib/model-upload-limits";
 import { Button, Field } from "./ui";
 
 export function JsonForm({ endpoint, method = "POST", initial, fields, submitLabel = "保存", redirectTo }: { endpoint: string; method?: string; initial?: Record<string, unknown>; fields: { name: string; label: string; type?: string; options?: { label: string; value: string }[]; textarea?: boolean }[]; submitLabel?: string; redirectTo?: string }) {
@@ -86,6 +87,17 @@ export function ModelUploadForm({ initialName = "" }: { initialName?: string }) 
   const [pending, setPending] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
+  const selectedFileTooLarge = selectedFile ? selectedFile.size > modelUploadMaxBytes : false;
+
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    setError("");
+    setMessage("");
+    setProgress(0);
+    setSelectedFile(file);
+    if (file && file.size > modelUploadMaxBytes) setError(`模型压缩包不能大于 ${modelUploadMaxSizeLabel}`);
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -93,6 +105,7 @@ export function ModelUploadForm({ initialName = "" }: { initialName?: string }) 
     const formData = new FormData(form);
     const file = formData.get("modelFile");
     if (!(file instanceof File) || file.size === 0) return setError("请选择模型压缩包");
+    if (file.size > modelUploadMaxBytes) return setError(`模型压缩包不能大于 ${modelUploadMaxSizeLabel}`);
     const modelName = String(formData.get("modelName") ?? "").trim();
     if (!modelName) return setError("请填写模型名称");
     setPending(true);
@@ -108,7 +121,34 @@ export function ModelUploadForm({ initialName = "" }: { initialName?: string }) 
     setMessage("模型上传成功，已替换当前模型。");
     router.refresh();
   }
-  return <form onSubmit={submit} className="grid gap-4"><Field label="模型名称"><input name="modelName" defaultValue={initialName} maxLength={120} required placeholder="例如：我的问答模型" /></Field><label className="group cursor-pointer rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/80 p-5 transition hover:border-slate-400 hover:bg-white"><input name="modelFile" type="file" accept=".zip,application/zip" required className="sr-only" onChange={(event) => { setError(""); setMessage(""); setProgress(0); setSelectedFile(event.target.files?.[0] ?? null); }} /><div className="flex items-start gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-xl shadow-sm ring-1 ring-slate-200 transition group-hover:scale-105">⬆️</div><div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-950">{selectedFile ? selectedFile.name : "选择或拖入模型压缩包"}</div><div className="mt-1 text-xs leading-5 text-slate-500">{selectedFile ? `${(selectedFile.size / 1024 / 1024 / 1024).toFixed(2)} GB · 点击可重新选择` : "支持 .zip 文件，上传后会覆盖当前用户的旧模型。"}</div>{selectedFile && <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">文件已就绪</div>}</div></div></label>{pending && <div className="rounded-2xl bg-slate-50 p-4"><div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-600"><span>上传进度</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-slate-950 transition-all duration-300" style={{ width: `${progress}%` }} /></div><p className="mt-2 text-xs text-slate-500">大模型上传完成后还需要服务端解压校验，请保持页面打开。</p></div>}{message && <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{message}</div>}{error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}<button type="submit" disabled={pending} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? progress >= 100 ? "服务端处理中..." : "上传中，请勿关闭页面..." : selectedFile ? "上传并替换我的模型" : "选择文件后上传"}</button></form>;
+  return (
+    <form onSubmit={submit} className="grid gap-4">
+      <Field label="模型名称">
+        <input name="modelName" defaultValue={initialName} maxLength={120} required placeholder="例如：我的问答模型" />
+      </Field>
+      <label className="group cursor-pointer rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/80 p-5 transition hover:border-slate-400 hover:bg-white">
+        <input name="modelFile" type="file" accept=".zip,application/zip" required className="sr-only" onChange={handleFileChange} />
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-xl shadow-sm ring-1 ring-slate-200 transition group-hover:scale-105">⬆️</div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-slate-950">{selectedFile ? selectedFile.name : "选择或拖入模型压缩包"}</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">
+              {selectedFile ? `${formatModelUploadSize(selectedFile.size)} · 点击可重新选择` : `支持不超过 ${modelUploadMaxSizeLabel} 的 .zip 文件，上传后会覆盖当前用户的旧模型。`}
+            </div>
+            {selectedFile && (
+              <div className={selectedFileTooLarge ? "mt-3 inline-flex rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700" : "mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"}>
+                {selectedFileTooLarge ? `文件超过 ${modelUploadMaxSizeLabel}` : "文件已就绪"}
+              </div>
+            )}
+          </div>
+        </div>
+      </label>
+      {pending && <div className="rounded-2xl bg-slate-50 p-4"><div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-600"><span>上传进度</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-slate-950 transition-all duration-300" style={{ width: `${progress}%` }} /></div><p className="mt-2 text-xs text-slate-500">大模型上传完成后还需要服务端解压校验，请保持页面打开。</p></div>}
+      {message && <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{message}</div>}
+      {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}
+      <button type="submit" disabled={pending || selectedFileTooLarge} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? progress >= 100 ? "服务端处理中..." : "上传中，请勿关闭页面..." : selectedFile ? "上传并替换我的模型" : "选择文件后上传"}</button>
+    </form>
+  );
 }
 
 function uploadModelFile(file: File, modelName: string, onProgress: (progress: number) => void): Promise<Response> {

@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { handle, json, error } from "@/lib/http";
 import { getSyncedModelUploadIds } from "@/lib/model-sync";
+import { assertModelUploadSize } from "@/lib/model-upload-limits";
 import { assertModelStorageId, defaultModelNameFromFilename, getModelFile, modelNameOrFallback, parseModelName, saveModelUpload, saveModelUploadStream } from "@/lib/model-upload";
 import { prisma } from "@/lib/prisma";
 import type { SessionUser } from "@/lib/types";
@@ -70,6 +71,18 @@ function nameErrorResponse(nameError: unknown) {
   throw nameError;
 }
 
+function modelUploadSizeErrorResponse(sizeError: unknown) {
+  if (sizeError instanceof Error) return error(sizeError.message, 400);
+  throw sizeError;
+}
+
+function assertContentLengthWithinModelUploadLimit(request: Request) {
+  const contentLength = request.headers.get("content-length");
+  if (!contentLength) return;
+  const size = Number(contentLength);
+  if (Number.isFinite(size)) assertModelUploadSize(size);
+}
+
 export async function GET() {
   return handle(async () => {
     const user = await requireUser();
@@ -96,6 +109,11 @@ export async function POST(request: Request) {
         modelName = modelNameOrFallback(decodeHeaderValue(request.headers.get("x-model-name")), defaultModelNameFromFilename(directFilename));
       } catch (nameError) {
         return nameErrorResponse(nameError);
+      }
+      try {
+        assertContentLengthWithinModelUploadLimit(request);
+      } catch (sizeError) {
+        return modelUploadSizeErrorResponse(sizeError);
       }
       const uploadedAt = new Date();
       const model = await prisma.modelArtifact.upsert({
@@ -126,6 +144,11 @@ export async function POST(request: Request) {
     if (!formData) return error("上传请求无法解析，可能是文件过大或请求被截断，请重新选择较小的 .zip 文件后上传", 400);
     const file = getModelFile(formData);
     if (!file) return error("请上传模型 .zip 文件", 400);
+    try {
+      assertModelUploadSize(file.size);
+    } catch (sizeError) {
+      return modelUploadSizeErrorResponse(sizeError);
+    }
     let modelName: string;
     try {
       modelName = parseModelName(formData, defaultModelNameFromFilename(file.name));

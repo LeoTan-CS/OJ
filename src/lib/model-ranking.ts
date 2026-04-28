@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { loadEnvConfig } from "@next/env";
 import { readModelQuestions, type ModelQuestion } from "@/lib/model-runner";
 
 export const modelRankingQuestionSourceLabel = "data/model-benchmark/questions.json";
@@ -75,6 +76,17 @@ type ChatCompletionResponse = {
   choices?: { message?: { content?: string } }[];
 };
 
+const quietEnvLog = {
+  info() {},
+  error(...args: unknown[]) {
+    console.error(...args);
+  },
+};
+
+function reloadJudgeEnvConfig() {
+  loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production", quietEnvLog, true);
+}
+
 function requireEnv(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`缺少环境变量 ${name}`);
@@ -86,7 +98,28 @@ function optionalEnv(name: string) {
   return value || undefined;
 }
 
-function readJudgeOllamaKeepAlive() {
+function judgeChatCompletionsUrl(baseUrl: string) {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  return normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
+}
+
+function isLocalOllamaUrl(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname) && url.port === "11434";
+  } catch {
+    return false;
+  }
+}
+
+function shouldSendOllamaOptions(baseUrl: string) {
+  const provider = optionalEnv("JUDGE_API_PROVIDER")?.toLowerCase();
+  if (provider) return provider === "ollama";
+  return isLocalOllamaUrl(baseUrl);
+}
+
+function readJudgeOllamaKeepAlive(baseUrl: string) {
+  if (!shouldSendOllamaOptions(baseUrl)) return undefined;
   const value = optionalEnv("JUDGE_OLLAMA_KEEP_ALIVE");
   if (!value) return undefined;
   const numeric = Number(value);
@@ -94,6 +127,7 @@ function readJudgeOllamaKeepAlive() {
 }
 
 export function assertJudgeConfig() {
+  reloadJudgeEnvConfig();
   requireEnv("JUDGE_API_BASE_URL");
   requireEnv("JUDGE_API_KEY");
   requireEnv("JUDGE_MODEL");
@@ -251,10 +285,11 @@ export function createEmptyJudgeReport(input: RankingJudgeQuestionInput): JudgeQ
 }
 
 export async function judgeModelRanking(input: RankingJudgeQuestionInput, options: { unloadAfterResponse?: boolean } = {}) {
+  reloadJudgeEnvConfig();
   const baseUrl = requireEnv("JUDGE_API_BASE_URL").replace(/\/+$/, "");
   const apiKey = requireEnv("JUDGE_API_KEY");
   const model = requireEnv("JUDGE_MODEL");
-  const ollamaKeepAlive = options.unloadAfterResponse ? 0 : readJudgeOllamaKeepAlive();
+  const ollamaKeepAlive = options.unloadAfterResponse && shouldSendOllamaOptions(baseUrl) ? 0 : readJudgeOllamaKeepAlive(baseUrl);
   const prompt = [
     "你是一个严格、公正的大模型回答质量裁判。请根据准确性、完整性、结构清晰度、事实可靠性和中文表达质量排序。",
     "只要 answers 中有输出文本，该模型就必须参与质量排名。",
@@ -273,13 +308,28 @@ export async function judgeModelRanking(input: RankingJudgeQuestionInput, option
     temperature: 0.2,
   };
   if (ollamaKeepAlive !== undefined) requestBody.keep_alive = ollamaKeepAlive;
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(requestBody),
-  });
+  const endpoint = judgeChatCompletionsUrl(baseUrl);
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(requestBody),
+    });
+  } catch (error) {
+    const cause = error instanceof Error && "cause" in error ? error.cause : null;
+    const detail = cause && typeof cause === "object" && "message" in cause
+      ? String(cause.message)
+      : error instanceof Error
+        ? error.message
+        : "网络请求失败";
+    throw new Error(`裁判模型连接失败: ${detail}`);
+  }
   const bodyText = await response.text();
-  if (!response.ok) throw new Error(`裁判模型调用失败: HTTP ${response.status}`);
+  if (!response.ok) {
+    const bodyPreview = bodyText.trim().slice(0, 600);
+    throw new Error(`裁判模型调用失败: HTTP ${response.status}${bodyPreview ? ` - ${bodyPreview}` : ""}`);
+  }
   const body = extractJsonObject(bodyText) as ChatCompletionResponse;
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error("裁判模型响应缺少 content");

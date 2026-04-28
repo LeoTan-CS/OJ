@@ -3,9 +3,10 @@ import { access, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/pro
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { assertModelUploadSize } from "@/lib/model-upload-limits";
 
 const execFileAsync = promisify(execFile);
 
@@ -175,6 +176,22 @@ function assertZipFilename(filename: string) {
 
 function assertZipFile(file: File) {
   assertZipFilename(file.name);
+  assertModelUploadSize(file.size);
+}
+
+function createUploadSizeLimitStream() {
+  let uploadedBytes = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      uploadedBytes += chunk.length;
+      try {
+        assertModelUploadSize(uploadedBytes);
+        callback(null, chunk);
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error("模型压缩包大小校验失败"));
+      }
+    },
+  });
 }
 
 function isUnsafeZipEntry(entry: string) {
@@ -257,7 +274,7 @@ export async function saveModelUploadStream(id: string, filename: string, stream
   assertZipFilename(filename);
   const paths = await prepareModelUpload(id);
   try {
-    await pipeline(Readable.fromWeb(stream as NodeReadableStream<Uint8Array>), createWriteStream(paths.archivePath));
+    await pipeline(Readable.fromWeb(stream as NodeReadableStream<Uint8Array>), createUploadSizeLimitStream(), createWriteStream(paths.archivePath));
     return await commitModelUpload(id, await validateAndExtractModelUpload(paths));
   } catch (error) {
     await rm(paths.root, { recursive: true, force: true }).catch(() => undefined);

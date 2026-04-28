@@ -166,6 +166,9 @@ type LeaderboardIdentityFields = {
   isCurrentUser?: boolean;
 };
 
+const publicLeaderboardModelIds = new Set(["user1"]);
+const publicLeaderboardUsernames = new Set(["user1"]);
+
 export type RankingBatchLeaderboardInput = {
   batchId: string;
   questionSummary: string | null;
@@ -627,12 +630,17 @@ function isCurrentUserEntry(entry: LeaderboardIdentityFields, currentUsername: s
   return Boolean(currentUsername && (entry.username === currentUsername || entry.modelId === currentUsername));
 }
 
+function isPublicLeaderboardEntry(entry: LeaderboardIdentityFields) {
+  return publicLeaderboardModelIds.has(entry.modelId) || publicLeaderboardUsernames.has(entry.username);
+}
+
 function anonymizeEntry<Entry extends LeaderboardIdentityFields>(
   entry: Entry,
   identity: AnonymousModelIdentity,
   currentUsername?: string | null,
 ): Entry {
-  if (isCurrentUserEntry(entry, currentUsername)) return { ...entry, isCurrentUser: true };
+  const isCurrentUser = isCurrentUserEntry(entry, currentUsername);
+  if (isCurrentUser || isPublicLeaderboardEntry(entry)) return { ...entry, isCurrentUser };
   return {
     ...entry,
     modelId: identity.modelId,
